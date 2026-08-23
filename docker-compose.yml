@@ -12,15 +12,6 @@ services:
     image: domainsentinel:latest
     container_name: domainsentinel
     restart: unless-stopped
-    group_add:
-      - 984
-    # Hardening: read-only root FS, no Linux caps, tmpfs for /tmp
-    read_only: true
-    cap_drop:
-      - ALL
-    tmpfs:
-      - /tmp:size=10m,mode=1777
-    # Allow writes to data/config volumes only
     networks:
       - proxy
     volumes:

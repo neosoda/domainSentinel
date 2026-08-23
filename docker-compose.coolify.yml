@@ -35,17 +35,6 @@ services:
     container_name: domainsentinel
     restart: unless-stopped
 
-    # Non-root user + supplementary docker group (GID 984 on Debian)
-    # Adjust if your host has a different docker GID: `getent group docker`
-    group_add:
-      - "984"
-
-    read_only: true
-    cap_drop:
-      - ALL
-    tmpfs:
-      - /tmp:size=10m,mode=1777
-
     networks:
       - proxy
 

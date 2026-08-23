@@ -35,7 +35,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # needing --group-add 984 at runtime (which Coolify strips).
 RUN addgroup --system --gid 1000 domainsentinel && \
     addgroup --system --gid 984 docker && \
-    adduser --system --uid 1000 --ingroup domainsentinel --groups docker --disabled-login --disabled-password domainsentinel
+    adduser --system --uid 1000 --ingroup domainsentinel --disabled-login --disabled-password domainsentinel && \
+    usermod -aG docker domainsentinel
 
 WORKDIR /app
 

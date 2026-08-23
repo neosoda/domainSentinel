@@ -14,8 +14,6 @@ services:
     restart: unless-stopped
     group_add:
       - 984
-    security_opt:
-      - "no-new-privileges:true"
     # Hardening: read-only root FS, no Linux caps, tmpfs for /tmp
     read_only: true
     cap_drop:

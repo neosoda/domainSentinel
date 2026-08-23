@@ -40,9 +40,6 @@ services:
     group_add:
       - "984"
 
-    # Container hardening — see SECURITY.md
-    security_opt:
-      - "no-new-privileges:true"
     read_only: true
     cap_drop:
       - ALL

@@ -8,6 +8,7 @@ import (
 	"html/template"
 	"io/fs"
 	"log/slog"
+	"mime"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -24,6 +25,13 @@ import (
 	"domainsentinel/web"
 )
 
+func init() {
+	_ = mime.AddExtensionType(".css", "text/css; charset=utf-8")
+	_ = mime.AddExtensionType(".js", "application/javascript; charset=utf-8")
+	_ = mime.AddExtensionType(".svg", "image/svg+xml")
+	_ = mime.AddExtensionType(".ico", "image/x-icon")
+}
+
 // Server is the HTTP server.
 type Server struct {
 	cfg    *config.Config
@@ -31,14 +39,12 @@ type Server struct {
 	app    interface{ TriggerRefresh(context.Context) }
 	router *chi.Mux
 	tmpl   *template.Template
-	static http.FileSystem
 }
 
 // NewServer creates a new API + web server.
 func NewServer(cfg *config.Config, database *db.DB, app interface{ TriggerRefresh(context.Context) }) *Server {
 	s := &Server{cfg: cfg, db: database, app: app}
 	s.loadTemplates()
-	s.serveStatic()
 	s.setupRouter()
 	return s
 }
@@ -49,6 +55,8 @@ func (s *Server) loadTemplates() {
 		"statusLabel":  statusLabel,
 		"statusClass":  statusClass,
 		"cleanTitle":   cleanTitle,
+		"subName":      subName,
+		"domainSuffix": domainSuffix,
 		"category":     func(d *models.DomainEntry) string { return d.Category() },
 		"tlsDaysLeft":  func(d *models.DomainEntry) int { return d.TLSDaysLeft() },
 		"httpClass":    httpClass,
@@ -120,26 +128,6 @@ func (s *Server) loadTemplates() {
 	s.tmpl = tmpl
 }
 
-func (s *Server) serveStatic() {
-	possibleDirs := []string{
-		"web/static",
-		"/app/web/static",
-		filepath.Join(os.Getenv("PWD"), "web/static"),
-	}
-	for _, dir := range possibleDirs {
-		if fi, err := os.Stat(dir); err == nil && fi.IsDir() {
-			s.static = http.Dir(dir)
-			return
-		}
-	}
-	// Fallback to embedded static files
-	if sub, err := fs.Sub(web.FS, "static"); err == nil {
-		s.static = http.FS(sub)
-		return
-	}
-	s.static = http.Dir("/dev/null")
-}
-
 func (s *Server) setupRouter() {
 	r := chi.NewRouter()
 
@@ -157,9 +145,8 @@ func (s *Server) setupRouter() {
 		})
 	})
 
-	// Static files
-	r.Handle("/static/*", http.StripPrefix("/static/",
-		http.FileServer(s.static)))
+	// Static files served directly with strict MIME types
+	r.Get("/static/*", s.handleStatic)
 
 	// Pages
 	r.Get("/", s.handleIndex)
@@ -588,6 +575,76 @@ func cleanTitle(d *models.DomainEntry) string {
 		return d.Subdomain
 	}
 	return d.Domain
+}
+
+func subName(d *models.DomainEntry) string {
+	if d == nil {
+		return ""
+	}
+	if d.Subdomain != "" && d.Subdomain != "@" && d.Subdomain != d.FQDN {
+		return d.Subdomain
+	}
+	return d.FQDN
+}
+
+func domainSuffix(d *models.DomainEntry) string {
+	if d == nil {
+		return ""
+	}
+	if d.Subdomain != "" && d.Subdomain != "@" && d.Subdomain != d.FQDN && d.Domain != "" {
+		return "." + d.Domain
+	}
+	return ""
+}
+
+func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimPrefix(r.URL.Path, "/static/")
+	if path == "" || strings.Contains(path, "..") {
+		http.NotFound(w, r)
+		return
+	}
+
+	// Try reading from disk first (useful in development)
+	var data []byte
+	var err error
+
+	possibleDirs := []string{"web/static", "/app/web/static"}
+	for _, dir := range possibleDirs {
+		if content, readErr := os.ReadFile(filepath.Join(dir, path)); readErr == nil {
+			data = content
+			err = nil
+			break
+		}
+	}
+
+	if data == nil {
+		// Fallback to embedded FS
+		data, err = web.FS.ReadFile("static/" + path)
+	}
+
+	if err != nil || data == nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	ext := strings.ToLower(filepath.Ext(path))
+	switch ext {
+	case ".css":
+		w.Header().Set("Content-Type", "text/css; charset=utf-8")
+	case ".js":
+		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+	case ".svg":
+		w.Header().Set("Content-Type", "image/svg+xml")
+	case ".ico":
+		w.Header().Set("Content-Type", "image/x-icon")
+	default:
+		if ct := mime.TypeByExtension(ext); ct != "" {
+			w.Header().Set("Content-Type", ct)
+		}
+	}
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
 }
 
 func statusLabel(s models.Status) string {

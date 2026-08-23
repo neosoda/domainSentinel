@@ -56,19 +56,26 @@ services:
       - SCANNER_INTERVAL_S=30
       - HISTORY_RETENTION_DAYS=30
     labels:
+      # ─── Coolify-style Traefik labels (cinetrack-compatible) ────────────────
       - "traefik.enable=true"
-      - "traefik.http.routers.domainsentinel-http.rule=Host(`domains.techsentinel.fr`)"
-      - "traefik.http.routers.domainsentinel-http.entrypoints=web"
-      - "traefik.http.middlewares.domainsentinel-https-redirect.redirectscheme.scheme=https"
-      - "traefik.http.routers.domainsentinel-http.middlewares=domainsentinel-https-redirect"
-      - "traefik.http.routers.domainsentinel.rule=Host(`domains.techsentinel.fr`)"
-      - "traefik.http.routers.domainsentinel.entrypoints=websecure"
-      - "traefik.http.routers.domainsentinel.tls=true"
-      - "traefik.http.routers.domainsentinel.tls.certresolver=letsencrypt"
-      - "traefik.http.routers.domainsentinel.service=domainsentinel"
-      - "traefik.http.services.domainsentinel.loadbalancer.server.port=3000"
-      # Authentik protection (ForwardAuth)
-      - "traefik.http.routers.domainsentinel.middlewares=authentik@docker"
+      # Middlewares
+      - "traefik.http.middlewares.gzip.compress=true"
+      - "traefik.http.middlewares.redirect-to-https.redirectscheme.scheme=https"
+      # HTTP router (web → redirect to HTTPS)
+      - "traefik.http.routers.http-0-domainsentinel.entryPoints=web"
+      - "traefik.http.routers.http-0-domainsentinel.middlewares=redirect-to-https"
+      - "traefik.http.routers.http-0-domainsentinel.rule=Host(`domain.techsentinel.fr`) && PathPrefix(`/`)"
+      - "traefik.http.routers.http-0-domainsentinel.service=http-0-domainsentinel"
+      # HTTPS router (websecure → TLS + Authentik + gzip)
+      - "traefik.http.routers.https-0-domainsentinel.entryPoints=websecure"
+      - "traefik.http.routers.https-0-domainsentinel.middlewares=authentik@docker,gzip"
+      - "traefik.http.routers.https-0-domainsentinel.rule=Host(`domain.techsentinel.fr`) && PathPrefix(`/`)"
+      - "traefik.http.routers.https-0-domainsentinel.tls=true"
+      - "traefik.http.routers.https-0-domainsentinel.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.https-0-domainsentinel.service=https-0-domainsentinel"
+      # Services
+      - "traefik.http.services.http-0-domainsentinel.loadbalancer.server.port=3000"
+      - "traefik.http.services.https-0-domainsentinel.loadbalancer.server.port=3000"
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:3000/health || exit 1"]
       interval: 30s

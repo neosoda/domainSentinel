@@ -222,4 +222,3 @@ func TestCorrelator_Correlate(t *testing.T) {
 		t.Errorf("Host = %q, want NEOSERVER", entry.Host)
 	}
 }
-

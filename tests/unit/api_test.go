@@ -252,4 +252,3 @@ func TestAPI_Endpoints(t *testing.T) {
 		}
 	})
 }
-

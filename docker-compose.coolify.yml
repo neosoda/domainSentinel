@@ -42,7 +42,7 @@ services:
 
     # Container hardening — see SECURITY.md
     security_opt:
-      - no-new-privileges:true
+      - "no-new-privileges:true"
     read_only: true
     cap_drop:
       - ALL

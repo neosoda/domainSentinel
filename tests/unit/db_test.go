@@ -229,4 +229,3 @@ func TestDB_AnnotationsAndMeta(t *testing.T) {
 		t.Errorf("GetAnnotation() = %+v, want %+v", got, annot)
 	}
 }
-

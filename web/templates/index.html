@@ -3,9 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>DomainSentinel — Inventaire DNS</title>
+  <title>DomainSentinel — Mes Sous-domaines</title>
   <link rel="stylesheet" href="/static/style.css">
-  <script src="/static/htmx.min.js" defer></script>
   <script src="/static/alpine.min.js" defer></script>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔭</text></svg>">
 </head>
@@ -22,12 +21,8 @@
       <span class="zone-badge">{{ .Zone }}</span>
     </div>
     <div class="header-right">
-      <div class="scan-status">
-        <span class="scan-dot" :class="scanning ? 'pulsing' : 'stable'"></span>
-        <span x-text="scanning ? 'Scan en cours…' : 'Scan #{{ .Summary.Total }} domaines'">Scan #{{ .Summary.Total }} domaines</span>
-      </div>
       <div class="last-scan">
-        {{if .LastScan.IsZero}}jamais{{else}}il y a {{ formatAge .LastScan }}{{end}}
+        {{if .LastScan.IsZero}}Dernier scan : à l'instant{{else}}Scan : il y a {{ formatAge .LastScan }}{{end}}
       </div>
       <button class="btn-refresh" @click="refresh()" :disabled="scanning">
         <svg x-show="!scanning" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
@@ -39,202 +34,122 @@
 
   <!-- Summary bar -->
   <div class="summary-bar">
-    <div class="stat stat-total">
-      <span class="stat-value">{{ .Summary.Total }}</span>
-      <span class="stat-label">domaines</span>
+    <div class="stats-group">
+      <a class="stat-card" :class="filter === '' ? 'active' : ''" href="javascript:void(0)" @click="setFilter('')">
+        <div class="stat-num">{{ .Summary.Total }}</div>
+        <div class="stat-txt">Total</div>
+      </a>
+      <a class="stat-card stat-ok" :class="filter === 'ok' ? 'active' : ''" href="javascript:void(0)" @click="setFilter('ok')">
+        <div class="stat-num">{{ .Summary.OK }}</div>
+        <div class="stat-txt">En ligne</div>
+      </a>
+      <a class="stat-card stat-down" :class="filter === 'down' ? 'active' : ''" href="javascript:void(0)" @click="setFilter('down')">
+        <div class="stat-num">{{ .Summary.Down }}</div>
+        <div class="stat-txt">Hors ligne</div>
+      </a>
     </div>
-    <a class="stat stat-ok {{if eq .Filter "ok"}}active{{end}}" href="?filter=ok">
-      <span class="stat-value ok">{{ .Summary.OK }}</span>
-      <span class="stat-label">OK</span>
-    </a>
-    <a class="stat stat-down {{if eq .Filter "down"}}active{{end}}" href="?filter=down">
-      <span class="stat-value down">{{ .Summary.Down }}</span>
-      <span class="stat-label">DOWN</span>
-    </a>
-    <a class="stat stat-anomaly {{if eq .Filter "anomalies"}}active{{end}}" href="?filter=anomalies">
-      <span class="stat-value anomaly">{{ .Summary.Anomalies }}</span>
-      <span class="stat-label">anomalies</span>
-    </a>
-    <div class="stat-divider"></div>
-    <div class="quick-filters">
-      <a class="qf {{if eq .Filter "dns-orphan"}}active{{end}}" href="?filter=dns-orphan">DNS orphelins</a>
-      <a class="qf {{if eq .Filter "dns-missing"}}active{{end}}" href="?filter=dns-missing">DNS manquants</a>
-      <a class="qf {{if eq .Filter "unprotected"}}active{{end}}" href="?filter=unprotected">Non protégés</a>
-      <a class="qf {{if eq .Filter "coolify"}}active{{end}}" href="?filter=coolify">Coolify</a>
-      <a class="qf {{if eq .Filter "docker-compose"}}active{{end}}" href="?filter=docker-compose">Compose</a>
-      {{if .Filter}}<a class="qf qf-clear" href="/">✕ Tout</a>{{end}}
+
+    <!-- Search input -->
+    <div class="search-wrap">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+      <input type="text" x-model="search" @input="filterRows()" placeholder="Rechercher un sous-domaine…" class="search-field" autofocus>
+      <button x-show="search" @click="search=''; filterRows()" class="clear-btn">✕</button>
     </div>
   </div>
 
-  <!-- Search & filters row -->
-  <div class="toolbar">
-    <div class="search-box">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-      <input type="text" x-model="search" @input.debounce.200ms="doSearch()" placeholder="Rechercher domaine, conteneur, image…" class="search-input">
+  <!-- Domain List Table -->
+  <main class="content">
+    <div class="table-card">
+      <table class="listing-table">
+        <thead>
+          <tr>
+            <th class="col-main">Sous-domaine</th>
+            <th class="col-status">Statut</th>
+            <th class="col-latency">Latence</th>
+            <th class="col-action">Accès direct</th>
+          </tr>
+        </thead>
+        <tbody>
+          {{range .Domains}}
+          <tr class="domain-row" data-fqdn="{{ .FQDN }}" data-subdomain="{{ .Subdomain }}" data-status="{{ if eq .Status "DOWN" }}down{{ else }}ok{{ end }}">
+            <!-- Subdomain / Title -->
+            <td class="col-main">
+              <div class="domain-info">
+                <a href="https://{{ .FQDN }}" target="_blank" rel="noopener noreferrer" class="domain-title">
+                  <span class="subdomain-highlight">{{ cleanTitle . }}</span><span class="domain-tld">.{{ .Domain }}</span>
+                </a>
+                <button class="copy-btn" @click="copyText('https://{{ .FQDN }}', $event)" title="Copier l'URL">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+                </button>
+              </div>
+            </td>
+
+            <!-- Status -->
+            <td class="col-status">
+              {{if eq .Status "DOWN"}}
+                <span class="status-badge down">
+                  <span class="dot red"></span> Hors ligne {{if .HTTP.StatusCode}}({{ .HTTP.StatusCode }}){{end}}
+                </span>
+              {{else}}
+                <span class="status-badge up">
+                  <span class="dot green"></span> En ligne {{if .HTTP.StatusCode}}({{ .HTTP.StatusCode }}){{end}}
+                </span>
+              {{end}}
+            </td>
+
+            <!-- Latency -->
+            <td class="col-latency">
+              {{if .HTTP.LatencyMs}}
+                <span class="latency-val">{{ .HTTP.LatencyMs }} ms</span>
+              {{else}}
+                <span class="muted">—</span>
+              {{end}}
+            </td>
+
+            <!-- Open action link -->
+            <td class="col-action">
+              <a href="https://{{ .FQDN }}" target="_blank" rel="noopener noreferrer" class="open-link" title="Ouvrir https://{{ .FQDN }}">
+                Ouvrir ↗
+              </a>
+            </td>
+          </tr>
+          {{else}}
+          <tr>
+            <td colspan="4" class="empty-cell">
+              <div class="empty-box">
+                <p>Aucun sous-domaine trouvé.</p>
+              </div>
+            </td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
     </div>
-    <div class="toolbar-right">
-      <span class="result-count">{{ len .Domains }} résultats</span>
-      <span class="export-btn" title="Export JSON">
-        <a href="/api/v1/domains?format=json" target="_blank">JSON ↗</a>
-      </span>
-    </div>
-  </div>
-
-  <!-- Table -->
-  <div class="table-container">
-    <table class="domain-table">
-      <thead>
-        <tr>
-          <th class="col-domain">DOMAIN</th>
-          <th class="col-dns">DNS</th>
-          <th class="col-cf">CF</th>
-          <th class="col-traefik">TRAEFIK</th>
-          <th class="col-service">SERVICE</th>
-          <th class="col-source">SOURCE</th>
-          <th class="col-host">HOST</th>
-          <th class="col-auth">AUTH</th>
-          <th class="col-http">HTTP</th>
-          <th class="col-latency">LAT.</th>
-          <th class="col-tls">TLS</th>
-          <th class="col-status">STATUS</th>
-        </tr>
-      </thead>
-      <tbody>
-        {{range .Domains}}
-        <tr class="domain-row" data-fqdn="{{ .FQDN }}" @click="location.href='/domain/{{ .FQDN }}'" style="cursor:pointer">
-          <!-- Domain -->
-          <td class="col-domain">
-            <span class="domain-name">{{ .Subdomain }}</span>
-            <span class="domain-root">.{{ .Domain }}</span>
-            {{if .Anomalies}}<span class="anomaly-dot" title="{{ range .Anomalies }}{{ .Message }} / {{ end }}">⚠</span>{{end}}
-          </td>
-
-          <!-- DNS -->
-          <td class="col-dns center">
-            {{if .DNS.Exists}}
-              <span class="badge badge-{{ .DNS.Type | lower }}" title="{{ .DNS.Type }} → {{ .DNS.Target }}">✅</span>
-            {{else}}
-              <span class="badge badge-none" title="Aucun enregistrement DNS">❌</span>
-            {{end}}
-          </td>
-
-          <!-- Cloudflare Proxy -->
-          <td class="col-cf center">
-            {{if .DNS.Proxied}}
-              <span class="cf-badge proxied" title="Proxy Cloudflare actif (orange)">●</span>
-            {{else if .DNS.Exists}}
-              <span class="cf-badge direct" title="DNS direct (gris)">○</span>
-            {{end}}
-          </td>
-
-          <!-- Traefik -->
-          <td class="col-traefik center">
-            {{if .Traefik.Exists}}
-              <span class="badge badge-ok" title="{{ range .Traefik.RouterNames }}{{ . }} {{ end }}">✅</span>
-            {{else}}
-              <span class="badge badge-none">❌</span>
-            {{end}}
-          </td>
-
-          <!-- Service -->
-          <td class="col-service">
-            {{if .Docker.ContainerName}}
-              <span class="service-name" title="{{ .Docker.Image }}">{{ .Docker.ContainerName }}</span>
-            {{else if .Traefik.ServiceName}}
-              <span class="service-name muted">{{ .Traefik.ServiceName }}</span>
-            {{else}}
-              <span class="muted">—</span>
-            {{end}}
-          </td>
-
-          <!-- Source -->
-          <td class="col-source">
-            {{if eq .Docker.Source "coolify"}}
-              <span class="source-badge coolify">Coolify</span>
-            {{else if eq .Docker.Source "docker-compose"}}
-              <span class="source-badge compose">Compose</span>
-            {{else if eq .Docker.Source "manual"}}
-              <span class="source-badge manual">Manual</span>
-            {{else}}
-              <span class="muted">—</span>
-            {{end}}
-          </td>
-
-          <!-- Host -->
-          <td class="col-host">
-            <span class="host-badge {{ .Host | hostClass }}">{{ .Host }}</span>
-          </td>
-
-          <!-- Auth -->
-          <td class="col-auth center">
-            {{if .Traefik.HasAuthentik}}
-              <span class="auth-badge yes" title="Protégé par Authentik">🔒</span>
-            {{else if .Traefik.Exists}}
-              <span class="auth-badge no" title="Non protégé par Authentik">🔓</span>
-            {{end}}
-          </td>
-
-          <!-- HTTP -->
-          <td class="col-http center">
-            {{if .HTTP.StatusCode}}
-              <span class="http-code http-{{ .HTTP.StatusCode | httpClass }}" title="{{ .HTTP.Error }}">{{ .HTTP.StatusCode }}</span>
-            {{else if .Traefik.Exists}}
-              <span class="http-code http-unknown">?</span>
-            {{end}}
-          </td>
-
-          <!-- Latency -->
-          <td class="col-latency center">
-            {{if .HTTP.LatencyMs}}
-              <span class="latency {{ .HTTP.LatencyMs | latencyClass }}">{{ .HTTP.LatencyMs }}ms</span>
-            {{end}}
-          </td>
-
-          <!-- TLS -->
-          <td class="col-tls center">
-            {{if .HTTP.TLSValid}}
-              <span class="tls-badge valid" title="TLS valide{{if .HTTP.TLSExpireAt}}; expire {{ .HTTP.TLSExpireAt.Format "02/01/2006" }}{{end}}">✓</span>
-            {{else if .HTTP.StatusCode}}
-              <span class="tls-badge invalid">✗</span>
-            {{end}}
-          </td>
-
-          <!-- Status -->
-          <td class="col-status center">
-            <span class="status-badge status-{{ .Status | statusClass }}">{{ .Status | statusLabel }}</span>
-          </td>
-        </tr>
-        {{else}}
-        <tr>
-          <td colspan="12" class="empty-row">
-            <div class="empty-state">
-              <span class="empty-icon">🔍</span>
-              <p>Aucun domaine trouvé</p>
-              {{if .Filter}}<p><a href="/">Afficher tous les domaines</a></p>{{end}}
-            </div>
-          </td>
-        </tr>
-        {{end}}
-      </tbody>
-    </table>
-  </div>
+  </main>
 
   <footer class="footer">
-    DomainSentinel — inventaire automatique | <a href="/metrics">/metrics</a> | <a href="/api/v1/domains">API</a>
+    <span>DomainSentinel — Répertoire de sous-domaines</span>
   </footer>
 </div>
 
+<!-- Toast notification for copy -->
+<div id="toast" class="toast">URL copiée dans le presse-papier !</div>
+
 <script>
-// ── Alpine Dashboard ─────────────────────────────────────────────────────────
 function dashboard() {
   return {
     scanning: false,
     search: '',
+    filter: '',
 
     init() {
-      this.search = new URLSearchParams(location.search).get('q') || '';
-      // Auto-refresh every 60s
+      // Auto-refresh summary silently every 60s
       setInterval(() => this.refreshSilent(), 60000);
+    },
+
+    setFilter(f) {
+      this.filter = (this.filter === f) ? '' : f;
+      this.filterRows();
     },
 
     async refresh() {
@@ -242,7 +157,7 @@ function dashboard() {
       this.scanning = true;
       try {
         await fetch('/api/v1/refresh', { method: 'POST' });
-        setTimeout(() => location.reload(), 2000);
+        setTimeout(() => location.reload(), 2500);
       } catch(e) {
         console.error(e);
         this.scanning = false;
@@ -251,180 +166,380 @@ function dashboard() {
 
     async refreshSilent() {
       try {
-        const res = await fetch('/api/v1/summary');
-        if (res.ok) {
-          // silently update summary if needed
-        }
+        await fetch('/api/v1/summary');
       } catch(e) {}
     },
 
-    doSearch() {
-      const params = new URLSearchParams(location.search);
-      if (this.search) {
-        params.set('q', this.search);
-      } else {
-        params.delete('q');
-      }
-      const url = '/?' + params.toString();
-      history.pushState({}, '', url);
-      this.filterTable();
-    },
-
-    filterTable() {
-      const query = this.search.toLowerCase();
+    filterRows() {
+      const q = this.search.toLowerCase().trim();
       const rows = document.querySelectorAll('.domain-row');
+      let visibleCount = 0;
+
       rows.forEach(row => {
-        const fqdn = row.dataset.fqdn || '';
-        const container = row.querySelector('.service-name')?.textContent || '';
-        if (!query || fqdn.includes(query) || container.includes(query)) {
+        const fqdn = (row.dataset.fqdn || '').toLowerCase();
+        const status = row.dataset.status || '';
+
+        const matchesQuery = !q || fqdn.includes(q);
+        const matchesFilter = !this.filter || (this.filter === 'ok' && status === 'ok') || (this.filter === 'down' && status === 'down');
+
+        if (matchesQuery && matchesFilter) {
           row.style.display = '';
+          visibleCount++;
         } else {
           row.style.display = 'none';
         }
       });
+    },
+
+    copyText(text, ev) {
+      if (ev) ev.stopPropagation();
+      navigator.clipboard.writeText(text).then(() => {
+        const toast = document.getElementById('toast');
+        toast.classList.add('show');
+        setTimeout(() => toast.classList.remove('show'), 2000);
+      });
     }
   }
 }
-
-// ── Template helpers ──────────────────────────────────────────────────────────
-function formatAge(ts) {
-  if (!ts || ts === '0001-01-01T00:00:00Z') return 'jamais';
-  const d = new Date(ts);
-  const now = new Date();
-  const diffMs = now - d;
-  const diffMin = Math.floor(diffMs / 60000);
-  if (diffMin < 1) return 'à l\'instant';
-  if (diffMin < 60) return diffMin + 'min';
-  const diffH = Math.floor(diffMin / 60);
-  if (diffH < 24) return diffH + 'h';
-  return Math.floor(diffH / 24) + 'j';
-}
-
-// Register helpers as global for template use
-window.formatAge = formatAge;
 </script>
 
 <style>
-/* Embedded minimal dark theme — additional styles in static/style.css */
 :root {
-  --bg: #0f1117;
-  --bg2: #1a1d27;
-  --border: #2a2d3a;
-  --text: #c9cdd6;
-  --text-muted: #6b7280;
-  --green: #22c55e;
-  --red: #ef4444;
-  --yellow: #eab308;
-  --blue: #3b82f6;
-  --purple: #a855f7;
+  --bg-app: #0d1117;
+  --bg-card: #161b22;
+  --bg-card-hover: #1c2128;
+  --border-color: #30363d;
+  --border-subtle: #21262d;
+  --text-main: #f0f6fc;
+  --text-muted: #8b949e;
+  --text-dim: #6e7681;
+  --green: #3fb950;
+  --green-bg: rgba(63, 185, 80, 0.12);
+  --red: #f85149;
+  --red-bg: rgba(248, 81, 73, 0.12);
+  --blue: #58a6ff;
+  --blue-bg: rgba(88, 166, 255, 0.12);
 }
+
 * { box-sizing: border-box; margin: 0; padding: 0; }
-body { background: var(--bg); color: var(--text); font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Consolas', monospace; font-size: 12px; }
-.app { min-height: 100vh; display: flex; flex-direction: column; }
-.header { display: flex; align-items: center; justify-content: space-between; padding: 12px 20px; border-bottom: 1px solid var(--border); background: var(--bg2); }
-.header-left { display: flex; align-items: center; gap: 12px; }
-.logo { font-size: 16px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
-.logo-icon { font-size: 20px; }
-.zone-badge { background: var(--border); padding: 2px 8px; border-radius: 4px; font-size: 11px; color: var(--text-muted); }
-.header-right { display: flex; align-items: center; gap: 16px; }
-.scan-status { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-muted); }
-.scan-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); }
-.scan-dot.pulsing { animation: pulse 1.5s infinite; background: var(--yellow); }
-.scan-dot.stable { background: var(--green); }
-@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
-.last-scan { font-size: 11px; color: var(--text-muted); }
-.btn-refresh { display: flex; align-items: center; gap: 6px; background: var(--bg2); border: 1px solid var(--border); color: var(--text); padding: 6px 12px; border-radius: 6px; cursor: pointer; font-family: inherit; font-size: 12px; transition: background 0.15s; }
-.btn-refresh:hover { background: var(--border); }
-.btn-refresh:disabled { opacity: 0.5; cursor: not-allowed; }
+body {
+  background: var(--bg-app);
+  color: var(--text-main);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-size: 13px;
+  line-height: 1.5;
+  min-height: 100vh;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+/* Header */
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 28px;
+  background: var(--bg-card);
+  border-bottom: 1px solid var(--border-color);
+}
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.logo {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-main);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  letter-spacing: -0.02em;
+}
+.logo-icon { font-size: 18px; }
+.zone-badge {
+  background: var(--border-subtle);
+  border: 1px solid var(--border-color);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: 12px;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.last-scan {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.btn-refresh {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--border-subtle);
+  border: 1px solid var(--border-color);
+  color: var(--text-main);
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.btn-refresh:hover {
+  background: var(--border-color);
+  border-color: var(--text-dim);
+}
+.btn-refresh:disabled { opacity: 0.6; cursor: not-allowed; }
 .spin { animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
-.summary-bar { display: flex; align-items: center; gap: 0; padding: 10px 20px; border-bottom: 1px solid var(--border); background: var(--bg); overflow-x: auto; }
-.stat { display: flex; flex-direction: column; align-items: center; padding: 6px 16px; border-right: 1px solid var(--border); text-decoration: none; color: inherit; }
-.stat-value { font-size: 22px; font-weight: 700; line-height: 1.2; }
-.stat-label { font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
-.stat-ok .stat-value { color: var(--green); }
-.stat-down .stat-value { color: var(--red); }
-.stat-anomaly .stat-value { color: var(--yellow); }
-.stat.active { background: var(--bg2); }
-.stat-divider { flex: 1; }
-.quick-filters { display: flex; gap: 8px; padding-left: 12px; flex-wrap: nowrap; }
-.qf { padding: 4px 10px; border-radius: 4px; border: 1px solid var(--border); font-size: 11px; color: var(--text-muted); text-decoration: none; white-space: nowrap; transition: all 0.15s; }
-.qf:hover { border-color: var(--text-muted); color: var(--text); }
-.qf.active { border-color: var(--blue); color: var(--blue); background: rgba(59,130,246,0.1); }
-.qf-clear { color: var(--red); border-color: var(--red); }
-.toolbar { display: flex; align-items: center; justify-content: space-between; padding: 8px 20px; border-bottom: 1px solid var(--border); background: var(--bg2); }
-.search-box { display: flex; align-items: center; gap: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 6px 12px; flex: 1; max-width: 400px; }
-.search-box svg { color: var(--text-muted); flex-shrink: 0; }
-.search-input { background: none; border: none; color: var(--text); font-family: inherit; font-size: 12px; width: 100%; outline: none; }
-.search-input::placeholder { color: var(--text-muted); }
-.toolbar-right { display: flex; align-items: center; gap: 12px; font-size: 11px; color: var(--text-muted); }
-.export-btn a { color: var(--blue); text-decoration: none; }
-.table-container { flex: 1; overflow: auto; }
-.domain-table { width: 100%; border-collapse: collapse; font-size: 11px; }
-.domain-table thead { position: sticky; top: 0; z-index: 10; background: var(--bg2); }
-.domain-table th { padding: 8px 10px; text-align: left; font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-muted); border-bottom: 1px solid var(--border); white-space: nowrap; }
-.domain-table th.center { text-align: center; }
-.domain-table tbody tr { border-bottom: 1px solid var(--border); transition: background 0.1s; }
-.domain-table tbody tr:hover { background: rgba(255,255,255,0.03); }
-.domain-table td { padding: 7px 10px; vertical-align: middle; }
-.domain-table td.center { text-align: center; }
-.col-domain { min-width: 200px; }
-.col-dns, .col-cf, .col-traefik, .col-auth, .col-tls { width: 50px; text-align: center; }
-.col-service { min-width: 140px; }
-.col-source, .col-host { width: 90px; }
-.col-http { width: 60px; text-align: center; }
-.col-latency { width: 70px; text-align: center; }
-.col-status { width: 90px; text-align: center; }
-.domain-name { color: var(--text); font-weight: 500; }
-.domain-root { color: var(--text-muted); }
-.anomaly-dot { color: var(--yellow); margin-left: 4px; }
-.badge { font-size: 12px; }
-.badge-ok { color: var(--green); }
-.badge-none { color: var(--red); }
-.badge-a, .badge-aaaa { color: var(--blue); }
-.badge-cname { color: var(--purple); }
-.cf-badge { font-size: 14px; }
-.cf-badge.proxied { color: #f97316; }
-.cf-badge.direct { color: var(--text-muted); }
-.service-name { color: var(--text); }
-.service-name.muted { color: var(--text-muted); font-style: italic; }
-.source-badge { padding: 2px 6px; border-radius: 3px; font-size: 10px; font-weight: 600; text-transform: uppercase; }
-.source-badge.coolify { background: rgba(249,115,22,0.15); color: #f97316; }
-.source-badge.compose { background: rgba(59,130,246,0.15); color: var(--blue); }
-.source-badge.manual { background: rgba(107,114,128,0.15); color: var(--text-muted); }
-.host-badge { padding: 2px 6px; border-radius: 3px; font-size: 10px; font-weight: 600; }
-.host-badge-NEOSERVER { background: rgba(34,197,94,0.15); color: var(--green); }
-.host-badge-BACKEND01 { background: rgba(168,85,247,0.15); color: var(--purple); }
-.host-badge-unknown { background: var(--border); color: var(--text-muted); }
-.auth-badge { font-size: 13px; }
-.auth-badge.yes { color: var(--green); }
-.auth-badge.no { color: var(--yellow); }
-.http-code { padding: 2px 6px; border-radius: 3px; font-size: 11px; font-weight: 600; }
-.http-200, .http-204 { background: rgba(34,197,94,0.15); color: var(--green); }
-.http-301, .http-302 { background: rgba(59,130,246,0.15); color: var(--blue); }
-.http-401, .http-403 { background: rgba(168,85,247,0.15); color: var(--purple); }
-.http-500, .http-502, .http-503 { background: rgba(239,68,68,0.15); color: var(--red); }
-.http-unknown { background: var(--border); color: var(--text-muted); }
-.latency { font-size: 11px; }
-.latency.fast { color: var(--green); }
-.latency.medium { color: var(--yellow); }
-.latency.slow { color: var(--red); }
-.tls-badge { font-size: 12px; }
-.tls-badge.valid { color: var(--green); }
-.tls-badge.invalid { color: var(--red); }
-.status-badge { padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; }
-.status-OK { background: rgba(34,197,94,0.15); color: var(--green); }
-.status-DOWN { background: rgba(239,68,68,0.15); color: var(--red); }
-.status-ANOMALY { background: rgba(234,179,8,0.15); color: var(--yellow); }
-.status-UNKNOWN { background: var(--border); color: var(--text-muted); }
-.empty-row td { padding: 60px; text-align: center; }
-.empty-state { display: flex; flex-direction: column; align-items: center; gap: 8px; }
-.empty-icon { font-size: 32px; opacity: 0.5; }
-.empty-state p { color: var(--text-muted); }
-.empty-state a { color: var(--blue); }
-.footer { padding: 10px 20px; border-top: 1px solid var(--border); font-size: 10px; color: var(--text-muted); text-align: center; }
-.footer a { color: var(--blue); text-decoration: none; }
-.muted { color: var(--text-muted); }
+
+/* Summary Bar */
+.summary-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 16px 28px;
+  background: var(--bg-app);
+  border-bottom: 1px solid var(--border-subtle);
+  flex-wrap: wrap;
+}
+.stats-group {
+  display: flex;
+  gap: 10px;
+}
+.stat-card {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  padding: 6px 14px;
+  border-radius: 8px;
+  text-decoration: none;
+  color: var(--text-main);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.stat-card:hover { border-color: var(--text-dim); }
+.stat-card.active { border-color: var(--blue); background: var(--blue-bg); }
+.stat-num { font-size: 16px; font-weight: 700; }
+.stat-txt { font-size: 12px; color: var(--text-muted); }
+.stat-ok .stat-num { color: var(--green); }
+.stat-down .stat-num { color: var(--red); }
+
+/* Search Box */
+.search-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 6px 12px;
+  width: 320px;
+  max-width: 100%;
+}
+.search-wrap svg { color: var(--text-dim); flex-shrink: 0; }
+.search-field {
+  background: none;
+  border: none;
+  outline: none;
+  color: var(--text-main);
+  font-size: 13px;
+  width: 100%;
+}
+.search-field::placeholder { color: var(--text-dim); }
+.clear-btn {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0 2px;
+}
+.clear-btn:hover { color: var(--text-main); }
+
+/* Main Content */
+.content {
+  flex: 1;
+  padding: 20px 28px;
+}
+.table-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.listing-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+}
+.listing-table th {
+  padding: 10px 16px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-bottom: 1px solid var(--border-color);
+  background: rgba(22, 27, 34, 0.8);
+}
+.listing-table td {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border-subtle);
+  vertical-align: middle;
+}
+.listing-table tbody tr:last-child td {
+  border-bottom: none;
+}
+.listing-table tbody tr:hover {
+  background: var(--bg-card-hover);
+}
+
+.col-main { width: 55%; }
+.col-status { width: 22%; }
+.col-latency { width: 13%; }
+.col-action { width: 10%; text-align: right; }
+
+.domain-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.domain-title {
+  text-decoration: none;
+  font-size: 13px;
+  font-family: "JetBrains Mono", Consolas, Menlo, monospace;
+}
+.subdomain-highlight {
+  color: var(--blue);
+  font-weight: 600;
+}
+.domain-tld {
+  color: var(--text-muted);
+}
+.domain-title:hover .subdomain-highlight {
+  text-decoration: underline;
+}
+
+.copy-btn {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.15s, background 0.15s;
+}
+.copy-btn:hover {
+  color: var(--text-main);
+  background: var(--border-color);
+}
+
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 600;
+}
+.status-badge.up {
+  background: var(--green-bg);
+  color: var(--green);
+}
+.status-badge.down {
+  background: var(--red-bg);
+  color: var(--red);
+}
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+.dot.green { background: var(--green); }
+.dot.red { background: var(--red); }
+
+.latency-val {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-family: "JetBrains Mono", monospace;
+}
+
+.open-link {
+  display: inline-block;
+  color: var(--blue);
+  text-decoration: none;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 4px 8px;
+  border-radius: 4px;
+  transition: background 0.15s;
+}
+.open-link:hover {
+  background: var(--blue-bg);
+}
+
+.empty-cell {
+  padding: 40px !important;
+  text-align: center;
+}
+.empty-box p { color: var(--text-muted); }
+
+/* Footer */
+.footer {
+  padding: 16px 28px;
+  border-top: 1px solid var(--border-subtle);
+  text-align: center;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+/* Toast */
+.toast {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  background: #21262d;
+  border: 1px solid var(--border-color);
+  color: var(--text-main);
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 12px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+  opacity: 0;
+  transform: translateY(10px);
+  transition: all 0.2s ease;
+  pointer-events: none;
+  z-index: 100;
+}
+.toast.show {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+@media (max-width: 640px) {
+  .header, .summary-bar, .content, .footer { padding: 12px 16px; }
+  .col-latency { display: none; }
+  .search-wrap { width: 100%; }
+}
 </style>
 </body>
 </html>
+

@@ -239,31 +239,32 @@ func (c *Correlator) detectAnomaliesWithResult(entry *models.DomainEntry, result
 func (c *Correlator) DetectAnomalies(entry *models.DomainEntry) []models.Anomaly {
 	var anomalies []models.Anomaly
 
-	// DNS_ORPHAN: DNS exists but no Traefik route
+	// DNS_ORPHAN: DNS exists but no Traefik route (informational)
 	if entry.DNS.Exists && !entry.Traefik.Exists {
 		anomalies = append(anomalies, models.Anomaly{
 			Type:     models.AnomalyDNSOrphan,
 			Message:  models.AnomalyDNSOrphan.Message(entry.FQDN),
-			Severity: models.SeverityWarning,
+			Severity: models.SeverityInfo,
 		})
 	}
 
-	// MISSING_DNS: Traefik route exists but no DNS
+	// MISSING_DNS: Traefik route exists but no direct Cloudflare DNS record found
+	// (common if using wildcard DNS or if token is not configured; informational only)
 	if !entry.DNS.Exists && entry.Traefik.Exists {
 		anomalies = append(anomalies, models.Anomaly{
 			Type:     models.AnomalyMissingDNS,
 			Message:  models.AnomalyMissingDNS.Message(entry.FQDN),
-			Severity: models.SeverityCritical,
+			Severity: models.SeverityInfo,
 		})
 	}
 
-	// CONTAINER_DOWN: Traefik exists but container is not running
+	// CONTAINER_DOWN: Traefik exists but container is stopped
 	if entry.Traefik.Exists && entry.Docker.ContainerID != "" {
 		if entry.Docker.Status != "running" && entry.Docker.Status != "" {
 			anomalies = append(anomalies, models.Anomaly{
 				Type:     models.AnomalyContainerDown,
 				Message:  models.AnomalyContainerDown.Message(entry.FQDN),
-				Severity: models.SeverityCritical,
+				Severity: models.SeverityWarning,
 			})
 		}
 	}
@@ -277,47 +278,29 @@ func (c *Correlator) DetectAnomalies(entry *models.DomainEntry) []models.Anomaly
 		})
 	}
 
-	// SERVICE_DOWN: DNS + Traefik OK but HTTP unreachable / 5xx error
-	if entry.DNS.Exists && entry.Traefik.Exists {
-		if entry.HTTP.StatusCode != 0 && !entry.HTTP.IsUp {
-			anomalies = append(anomalies, models.Anomaly{
-				Type:     models.AnomalyServiceDown,
-				Message:  models.AnomalyServiceDown.Message(entry.FQDN),
-				Severity: models.SeverityCritical,
-			})
-		} else if entry.HTTP.Error != "" && entry.HTTP.StatusCode == 0 {
-			anomalies = append(anomalies, models.Anomaly{
-				Type:     models.AnomalyServiceDown,
-				Message:  models.AnomalyServiceDown.Message(entry.FQDN) + " (" + entry.HTTP.Error + ")",
-				Severity: models.SeverityCritical,
-			})
-		}
+	// SERVICE_DOWN: HTTP check explicitly returned an error (5xx or network failure)
+	if entry.HTTP.StatusCode != 0 && !entry.HTTP.IsUp {
+		anomalies = append(anomalies, models.Anomaly{
+			Type:     models.AnomalyServiceDown,
+			Message:  models.AnomalyServiceDown.Message(entry.FQDN),
+			Severity: models.SeverityCritical,
+		})
+	} else if entry.HTTP.Error != "" && entry.HTTP.StatusCode == 0 {
+		anomalies = append(anomalies, models.Anomaly{
+			Type:     models.AnomalyServiceDown,
+			Message:  models.AnomalyServiceDown.Message(entry.FQDN) + " (" + entry.HTTP.Error + ")",
+			Severity: models.SeverityCritical,
+		})
 	}
 
-	// TLS_ERROR: HTTPS should work but doesn't or certificate expired
-	if entry.Traefik.Exists && contains(entry.Traefik.Entrypoints, "websecure") {
-		if !entry.HTTP.TLSValid && entry.HTTP.Error != "" {
-			if strings.Contains(entry.HTTP.Error, "certificate") || strings.Contains(entry.HTTP.Error, "tls") || strings.Contains(entry.HTTP.Error, "x509") {
-				anomalies = append(anomalies, models.Anomaly{
-					Type:     models.AnomalyTLSError,
-					Message:  models.AnomalyTLSError.Message(entry.FQDN),
-					Severity: models.SeverityCritical,
-				})
-			}
-		} else if entry.HTTP.TLSExpireAt != nil {
-			if time.Now().After(*entry.HTTP.TLSExpireAt) {
-				anomalies = append(anomalies, models.Anomaly{
-					Type:     models.AnomalyTLSError,
-					Message:  entry.FQDN + " : certificat TLS expiré",
-					Severity: models.SeverityCritical,
-				})
-			} else if time.Until(*entry.HTTP.TLSExpireAt) < 14*24*time.Hour {
-				anomalies = append(anomalies, models.Anomaly{
-					Type:     models.AnomalyTLSError,
-					Message:  entry.FQDN + " : certificat TLS expire dans moins de 14 jours",
-					Severity: models.SeverityWarning,
-				})
-			}
+	// TLS_ERROR: Certificate expired
+	if entry.HTTP.TLSExpireAt != nil {
+		if time.Now().After(*entry.HTTP.TLSExpireAt) {
+			anomalies = append(anomalies, models.Anomaly{
+				Type:     models.AnomalyTLSError,
+				Message:  entry.FQDN + " : certificat TLS expiré",
+				Severity: models.SeverityCritical,
+			})
 		}
 	}
 
@@ -326,30 +309,35 @@ func (c *Correlator) DetectAnomalies(entry *models.DomainEntry) []models.Anomaly
 
 // ComputeStatus evaluates the overall status of a domain entry.
 func (c *Correlator) ComputeStatus(entry *models.DomainEntry) models.Status {
-	// Down if any critical anomaly
-	for _, a := range entry.Anomalies {
-		if a.Severity == models.SeverityCritical {
+	// 1. If HTTP healthcheck has run, HTTP reachability is the ground truth
+	if entry.HTTP.StatusCode > 0 {
+		if entry.HTTP.IsUp {
+			return models.StatusOK
+		}
+		return models.StatusDown
+	}
+
+	// If HTTP had a network error
+	if entry.HTTP.Error != "" {
+		return models.StatusDown
+	}
+
+	// 2. If Docker container info is available
+	if entry.Docker.ContainerID != "" {
+		if entry.Docker.Status == "running" {
+			return models.StatusOK
+		}
+		if entry.Docker.Status == "exited" || entry.Docker.Status == "dead" {
 			return models.StatusDown
 		}
 	}
 
-	// Anomaly if HTTP is down AND DNS+Traefik exist (service down)
-	if entry.DNS.Exists && entry.Traefik.Exists && !entry.HTTP.IsUp && entry.HTTP.StatusCode != 0 {
-		return models.StatusAnomaly
+	// 3. If Traefik route or DNS exists, consider active by default
+	if entry.Traefik.Exists || entry.DNS.Exists {
+		return models.StatusOK
 	}
 
-	// Anomaly if warning-level anomalies present
-	if len(entry.Anomalies) > 0 {
-		return models.StatusAnomaly
-	}
-
-	// Unknown if no data
-	if !entry.DNS.Exists && !entry.Traefik.Exists {
-		return models.StatusUnknown
-	}
-
-	// All OK if we have DNS+Traefik+HTTP or at minimum DNS+Traefik
-	return models.StatusOK
+	return models.StatusUnknown
 }
 
 func (c *Correlator) splitDomain(fqdn string) (subdomain, domain string) {

@@ -29,8 +29,8 @@ func TestCorrelator_DetectAnomalies(t *testing.T) {
 		if len(entry.Anomalies) != 1 || entry.Anomalies[0].Type != models.AnomalyDNSOrphan {
 			t.Errorf("got %v, want AnomalyDNSOrphan", entry.Anomalies)
 		}
-		if status := c.ComputeStatus(entry); status != models.StatusAnomaly {
-			t.Errorf("status = %v, want ANOMALY", status)
+		if status := c.ComputeStatus(entry); status != models.StatusOK {
+			t.Errorf("status = %v, want OK", status)
 		}
 	})
 
@@ -43,8 +43,8 @@ func TestCorrelator_DetectAnomalies(t *testing.T) {
 		if len(entry.Anomalies) != 1 || entry.Anomalies[0].Type != models.AnomalyMissingDNS {
 			t.Errorf("got %v, want AnomalyMissingDNS", entry.Anomalies)
 		}
-		if status := c.ComputeStatus(entry); status != models.StatusDown {
-			t.Errorf("status = %v, want DOWN", status)
+		if status := c.ComputeStatus(entry); status != models.StatusOK {
+			t.Errorf("status = %v, want OK", status)
 		}
 	})
 

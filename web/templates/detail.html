@@ -6,280 +6,85 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{{ .Entry.FQDN }} — DomainSentinel</title>
   <link rel="stylesheet" href="/static/style.css">
-  <script src="/static/htmx.min.js" defer></script>
-  <script src="/static/alpine.min.js" defer></script>
   <style>
-    :root { --bg: #0f1117; --bg2: #1a1d27; --border: #2a2d3a; --text: #c9cdd6; --text-muted: #6b7280; --green: #22c55e; --red: #ef4444; --yellow: #eab308; --blue: #3b82f6; --purple: #a855f7; }
+    :root {
+      --bg-app: #0d1117;
+      --bg-card: #161b22;
+      --border-color: #30363d;
+      --border-subtle: #21262d;
+      --text-main: #f0f6fc;
+      --text-muted: #8b949e;
+      --text-dim: #6e7681;
+      --green: #3fb950;
+      --green-bg: rgba(63, 185, 80, 0.12);
+      --red: #f85149;
+      --red-bg: rgba(248, 81, 73, 0.12);
+      --blue: #58a6ff;
+      --blue-bg: rgba(88, 166, 255, 0.12);
+    }
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { background: var(--bg); color: var(--text); font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace; font-size: 12px; }
-    .container { max-width: 1100px; margin: 0 auto; padding: 24px 20px; }
-    .back { display: inline-flex; align-items: center; gap: 6px; color: var(--text-muted); text-decoration: none; margin-bottom: 20px; font-size: 11px; }
-    .back:hover { color: var(--text); }
-    .page-header { margin-bottom: 24px; }
-    .fqdn-title { font-size: 24px; font-weight: 700; margin-bottom: 8px; display: flex; align-items: center; gap: 12px; }
-    .status-pill { padding: 4px 12px; border-radius: 20px; font-size: 11px; font-weight: 700; text-transform: uppercase; }
-    .pill-OK { background: rgba(34,197,94,0.15); color: var(--green); }
-    .pill-DOWN { background: rgba(239,68,68,0.15); color: var(--red); }
-    .pill-ANOMALY { background: rgba(234,179,8,0.15); color: var(--yellow); }
-    .pill-UNKNOWN { background: var(--border); color: var(--text-muted); }
-    .subtitle { color: var(--text-muted); font-size: 11px; }
-    .subtitle span { margin-right: 16px; }
-    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
-    .card { background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
-    .card-header { padding: 10px 14px; border-bottom: 1px solid var(--border); font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-muted); font-weight: 600; display: flex; align-items: center; gap: 8px; }
-    .card-header .icon { font-size: 14px; }
-    .card-body { padding: 14px; }
-    .card-body.full-width { grid-column: 1 / -1; }
-    .kv { display: flex; justify-content: space-between; align-items: flex-start; padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.04); gap: 16px; }
+    body {
+      background: var(--bg-app);
+      color: var(--text-main);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      font-size: 13px;
+      line-height: 1.5;
+      padding: 32px 20px;
+    }
+    .container { max-width: 700px; margin: 0 auto; }
+    .back { display: inline-flex; align-items: center; gap: 6px; color: var(--text-muted); text-decoration: none; margin-bottom: 24px; font-size: 13px; }
+    .back:hover { color: var(--text-main); }
+    .card { background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 8px; padding: 24px; }
+    .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
+    .title { font-size: 18px; font-weight: 700; font-family: "JetBrains Mono", monospace; color: var(--blue); }
+    .status-badge { display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: 600; }
+    .status-badge.up { background: var(--green-bg); color: var(--green); }
+    .status-badge.down { background: var(--red-bg); color: var(--red); }
+    .dot { width: 6px; height: 6px; border-radius: 50%; }
+    .dot.green { background: var(--green); }
+    .dot.red { background: var(--red); }
+    .kv { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid var(--border-subtle); }
     .kv:last-child { border-bottom: none; }
-    .kv-key { color: var(--text-muted); flex-shrink: 0; min-width: 140px; }
-    .kv-value { color: var(--text); word-break: break-all; text-align: right; }
-    .kv-value.good { color: var(--green); }
-    .kv-value.bad { color: var(--red); }
-    .kv-value.warn { color: var(--yellow); }
-    .kv-value.info { color: var(--blue); }
-    .anomaly-list { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
-    .anomaly-item { padding: 8px 12px; border-radius: 6px; font-size: 11px; display: flex; align-items: flex-start; gap: 8px; }
-    .anomaly-item.critical { background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.3); }
-    .anomaly-item.warning { background: rgba(234,179,8,0.1); border: 1px solid rgba(234,179,8,0.3); }
-    .anomaly-item .type { font-weight: 700; text-transform: uppercase; flex-shrink: 0; min-width: 120px; }
-    .anomaly-item.critical .type { color: var(--red); }
-    .anomaly-item.warning .type { color: var(--yellow); }
-    .tag-list { display: flex; flex-wrap: wrap; gap: 4px; }
-    .tag { padding: 2px 6px; border-radius: 3px; font-size: 10px; background: var(--border); color: var(--text-muted); }
-    .badge-list { display: flex; flex-wrap: wrap; gap: 6px; }
-    .badge { padding: 3px 8px; border-radius: 4px; font-size: 11px; }
-    .badge-coolify { background: rgba(249,115,22,0.15); color: #f97316; }
-    .badge-compose { background: rgba(59,130,246,0.15); color: var(--blue); }
-    .badge-manual { background: var(--border); color: var(--text-muted); }
-    .badge-coolify, .badge-compose, .badge-manual { border: 1px solid; }
-    .tls-expire { font-size: 10px; color: var(--text-muted); margin-top: 2px; }
-    .section-title { font-size: 13px; font-weight: 600; margin-bottom: 12px; color: var(--text); }
-    .annotation-form { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-    .form-group { display: flex; flex-direction: column; gap: 4px; }
-    .form-group label { font-size: 10px; text-transform: uppercase; color: var(--text-muted); letter-spacing: 0.05em; }
-    .form-group input, .form-group textarea, .form-group select { background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 6px 10px; border-radius: 4px; font-family: inherit; font-size: 12px; outline: none; }
-    .form-group input:focus, .form-group textarea:focus, .form-group select:focus { border-color: var(--blue); }
-    .form-group textarea { resize: vertical; min-height: 60px; }
-    .btn-save { background: var(--blue); color: white; border: none; padding: 8px 20px; border-radius: 6px; cursor: pointer; font-family: inherit; font-size: 12px; font-weight: 600; }
-    .btn-save:hover { opacity: 0.9; }
-    .history-table { width: 100%; border-collapse: collapse; font-size: 11px; }
-    .history-table th { text-align: left; padding: 6px 8px; color: var(--text-muted); font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid var(--border); }
-    .history-table td { padding: 6px 8px; border-bottom: 1px solid rgba(255,255,255,0.04); }
-    .history-table tr:hover { background: rgba(255,255,255,0.02); }
-    .history-status-OK { color: var(--green); }
-    .history-status-DOWN { color: var(--red); }
-    .history-status-ANOMALY { color: var(--yellow); }
-    .no-history { color: var(--text-muted); font-style: italic; text-align: center; padding: 20px; }
+    .kv-k { color: var(--text-muted); }
+    .kv-v { font-weight: 500; }
+    .open-btn { display: inline-flex; align-items: center; justify-content: center; width: 100%; margin-top: 20px; background: var(--blue); color: #fff; text-decoration: none; padding: 10px 16px; border-radius: 6px; font-weight: 600; font-size: 13px; }
+    .open-btn:hover { opacity: 0.9; }
   </style>
 </head>
 <body>
 <div class="container">
-  <a href="/" class="back">← Retour à l'inventaire</a>
-
-  <div class="page-header">
-    <h1 class="fqdn-title">
-      {{ .Entry.FQDN }}
-      <span class="status-pill pill-{{ .Entry.Status }}">{{ .Entry.Status }}</span>
-    </h1>
-    <div class="subtitle">
-      <span>Premier vu : {{ .Entry.FirstSeen.Format "02/01/2006 15:04" }}</span>
-      <span>Dernière vérif : {{ .Entry.LastCheck.Format "02/01/2006 15:04" }}</span>
-      {{if .Entry.Host}}<span>Hôte : {{ .Entry.Host }}</span>{{end}}
-    </div>
-  </div>
-
-  <!-- Anomalies -->
-  {{if .Entry.Anomalies}}
-  <div class="card" style="margin-bottom:16px">
-    <div class="card-header"><span class="icon">⚠</span> Anomalies détectées</div>
-    <div class="card-body">
-      <div class="anomaly-list">
-        {{range .Entry.Anomalies}}
-        <div class="anomaly-item {{if eq .Severity "critical"}}critical{{else}}warning{{end}}">
-          <span class="type">{{ .Type }}</span>
-          <span>{{ .Message }}</span>
-        </div>
-        {{end}}
-      </div>
-    </div>
-  </div>
-  {{end}}
-
-  <div class="grid">
-    <!-- DNS Card -->
-    <div class="card">
-      <div class="card-header"><span class="icon">🌐</span> DNS (Cloudflare)</div>
-      <div class="card-body">
-        {{if .Entry.DNS.Exists}}
-        <div class="kv"><span class="kv-key">Enregistré</span><span class="kv-value good">Oui</span></div>
-        <div class="kv"><span class="kv-key">Type</span><span class="kv-value info">{{ .Entry.DNS.Type }}</span></div>
-        <div class="kv"><span class="kv-key">Cible</span><span class="kv-value">{{ .Entry.DNS.Target }}</span></div>
-        <div class="kv"><span class="kv-key">Proxy Cloudflare</span><span class="kv-value {{if .Entry.DNS.Proxied}}warn{{else}}muted{{end}}">{{if .Entry.DNS.Proxied}}Orange (proxied){{else}}Gris (DNS only){{end}}</span></div>
-        <div class="kv"><span class="kv-key">TTL</span><span class="kv-value">{{ .Entry.DNS.TTL }}</span></div>
-        {{else}}
-        <div class="kv"><span class="kv-key">Enregistré</span><span class="kv-value bad">Non</span></div>
-        {{end}}
-      </div>
-    </div>
-
-    <!-- Traefik Card -->
-    <div class="card">
-      <div class="card-header"><span class="icon">🚦</span> Traefik</div>
-      <div class="card-body">
-        {{if .Entry.Traefik.Exists}}
-        <div class="kv"><span class="kv-key">Routeur(s)</span><span class="kv-value">{{ join .Entry.Traefik.RouterNames ", " }}</span></div>
-        <div class="kv"><span class="kv-key">Service</span><span class="kv-value">{{ .Entry.Traefik.ServiceName | orDash }}</span></div>
-        <div class="kv"><span class="kv-key">Entrypoints</span><span class="kv-value">{{ join .Entry.Traefik.Entrypoints ", " }}</span></div>
-        <div class="kv"><span class="kv-key">TLS</span><span class="kv-value {{if .Entry.Traefik.TLS}}good{{else}}muted{{end}}">{{if .Entry.Traefik.TLS}}Activé{{else}}Désactivé{{end}}</span></div>
-        <div class="kv"><span class="kv-key">Authentik</span><span class="kv-value {{if .Entry.Traefik.HasAuthentik}}good{{else}}warn{{end}}">{{if .Entry.Traefik.HasAuthentik}}Protégé🔒{{else}}Non protégé🔓{{end}}</span></div>
-        {{if .Entry.Traefik.MiddlewareNames}}
-        <div class="kv"><span class="kv-key">Middlewares</span><span class="kv-value">{{ join .Entry.Traefik.MiddlewareNames ", " }}</span></div>
-        {{end}}
-        {{if .Entry.Traefik.Sources}}
-        <div class="kv"><span class="kv-key">Source route</span><span class="kv-value">{{ join .Entry.Traefik.Sources ", " }}</span></div>
-        {{end}}
-        {{else}}
-        <div class="kv"><span class="kv-key">Route Traefik</span><span class="kv-value bad">Aucune</span></div>
-        {{end}}
-      </div>
-    </div>
-
-    <!-- Docker Card -->
-    <div class="card">
-      <div class="card-header"><span class="icon">🐳</span> Docker</div>
-      <div class="card-body">
-        {{if .Entry.Docker.ContainerID}}
-        <div class="kv"><span class="kv-key">Conteneur</span><span class="kv-value">{{ .Entry.Docker.ContainerName }}</span></div>
-        <div class="kv"><span class="kv-key">Image</span><span class="kv-value" style="font-size:10px">{{ .Entry.Docker.Image }}</span></div>
-        <div class="kv"><span class="kv-key">Statut</span><span class="kv-value {{if eq .Entry.Docker.Status "running"}}good{{else}}bad{{end}}">{{ .Entry.Docker.Status }}</span></div>
-        <div class="kv"><span class="kv-key">Santé</span><span class="kv-value {{if eq .Entry.Docker.Health "healthy"}}good{{else if eq .Entry.Docker.Health "unhealthy"}}bad{{else}}muted{{end}}">{{ .Entry.Docker.Health | orDash }}</span></div>
-        <div class="kv"><span class="kv-key">Réseaux</span><span class="kv-value">{{ join .Entry.Docker.Networks ", " }}</span></div>
-        <div class="kv"><span class="kv-key">Source</span>
-          <span class="kv-value">
-            {{if eq .Entry.Docker.Source "coolify"}}<span class="badge badge-coolify">Coolify</span>{{end}}
-            {{if eq .Entry.Docker.Source "docker-compose"}}<span class="badge badge-compose">Docker Compose</span>{{end}}
-            {{if eq .Entry.Docker.Source "manual"}}<span class="badge badge-manual">Manual</span>{{end}}
-          </span>
-        </div>
-        {{if .Entry.Docker.CoolifyName}}
-        <div class="kv"><span class="kv-key">Coolify</span><span class="kv-value info">{{ .Entry.Docker.CoolifyName }} ({{ .Entry.Docker.ComposeProject }})</span></div>
-        {{end}}
-        {{else}}
-        <div class="kv"><span class="kv-key">Conteneur</span><span class="kv-value muted">—</span></div>
-        {{end}}
-      </div>
-    </div>
-
-    <!-- HTTP Card -->
-    <div class="card">
-      <div class="card-header"><span class="icon">🌍</span> HTTP / TLS</div>
-      <div class="card-body">
-        {{if .Entry.HTTP.StatusCode}}
-        <div class="kv"><span class="kv-key">Code HTTP</span><span class="kv-value {{if .Entry.HTTP.IsUp}}good{{else}}bad{{end}}">{{ .Entry.HTTP.StatusCode }}</span></div>
-        <div class="kv"><span class="kv-key">Latence</span><span class="kv-value">{{ .Entry.HTTP.LatencyMs }}ms</span></div>
-        <div class="kv"><span class="kv-key">TLS Valide</span><span class="kv-value {{if .Entry.HTTP.TLSValid}}good{{else}}bad{{end}}">{{if .Entry.HTTP.TLSValid}}Oui ✓{{else}}Non ✗{{end}}</span></div>
-        {{if .Entry.HTTP.TLSExpireAt}}
-        <div class="kv"><span class="kv-key">Cert expire</span><span class="kv-value">{{ .Entry.HTTP.TLSExpireAt.Format "02/01/2006" }}</span></div>
-        {{end}}
-        {{if .Entry.HTTP.Error}}
-        <div class="kv"><span class="kv-key">Erreur</span><span class="kv-value bad" style="font-size:10px">{{ .Entry.HTTP.Error }}</span></div>
-        {{end}}
-        {{else}}
-        <div class="kv"><span class="kv-key">Vérification HTTP</span><span class="kv-value muted">Non encore vérifié</span></div>
-        {{end}}
-      </div>
-    </div>
-  </div>
-
-  <!-- Annotation -->
-  <div class="card" style="margin-bottom:16px">
-    <div class="card-header"><span class="icon">📝</span> Annotations locales</div>
-    <div class="card-body">
-      <form id="annotation-form" class="annotation-form" onsubmit="saveAnnotation(event)">
-        <div class="form-group">
-          <label>Description</label>
-          {{with .Annotation}}<input type="text" id="f-desc" value="{{.Description}}" placeholder="Description du service…">{{else}}<input type="text" id="f-desc" value="" placeholder="Description du service…">{{end}}
-        </div>
-        <div class="form-group">
-          <label>Criticité</label>
-          <select id="f-crit">
-            <option value="">—</option>
-            <option value="low" {{if eq .Annotation.Criticality "low"}}selected{{end}}>Faible</option>
-            <option value="medium" {{if eq .Annotation.Criticality "medium"}}selected{{end}}>Moyenne</option>
-            <option value="high" {{if eq .Annotation.Criticality "high"}}selected{{end}}>Haute</option>
-          </select>
-        </div>
-        <div class="form-group">
-          <label>Responsable</label>
-          {{with .Annotation}}<input type="text" id="f-owner" value="{{.Owner}}" placeholder="Owner…">{{else}}<input type="text" id="f-owner" value="" placeholder="Owner…">{{end}}
-        </div>
-        <div class="form-group">
-          <label>Tags</label>
-          {{with .Annotation}}<input type="text" id="f-tags" value="{{.Tags}}" placeholder="monitoring, infra…">{{else}}<input type="text" id="f-tags" value="" placeholder="monitoring, infra…">{{end}}
-        </div>
-        <div class="form-group" style="grid-column:1/-1">
-          <label>Notes</label>
-          {{with .Annotation}}<textarea id="f-notes" placeholder="Notes internes…">{{.Notes}}</textarea>{{else}}<textarea id="f-notes" placeholder="Notes internes…"></textarea>{{end}}
-        </div>
-        <div style="grid-column:1/-1">
-          <button type="submit" class="btn-save">💾 Enregistrer</button>
-          <span id="save-status" style="margin-left:12px;font-size:11px;color:var(--text-muted)"></span>
-        </div>
-      </form>
-    </div>
-  </div>
-
-  <!-- History -->
+  <a href="/" class="back">← Retour à la liste</a>
   <div class="card">
-    <div class="card-header"><span class="icon">📊</span> Historique récent</div>
-    <div class="card-body">
-      {{if .History}}
-      <table class="history-table">
-        <thead><tr><th>Date</th><th>Statut</th><th>Anomalies</th></tr></thead>
-        <tbody>
-          {{range .History}}
-          <tr>
-            <td>{{ .CheckedAt.Format "02/01 15:04" }}</td>
-            <td class="history-status-{{ .Status }}">{{ .Status }}</td>
-            <td style="font-size:10px;color:var(--text-muted)">{{ .Anomalies }}</td>
-          </tr>
-          {{end}}
-        </tbody>
-      </table>
+    <div class="header">
+      <h1 class="title">{{ .Entry.FQDN }}</h1>
+      {{if eq .Entry.Status "DOWN"}}
+        <span class="status-badge down"><span class="dot red"></span> Hors ligne</span>
       {{else}}
-      <p class="no-history">Aucun historique disponible</p>
+        <span class="status-badge up"><span class="dot green"></span> En ligne</span>
       {{end}}
     </div>
+    <div class="kv">
+      <span class="kv-k">Sous-domaine</span>
+      <span class="kv-v">{{ .Entry.Subdomain }}</span>
+    </div>
+    <div class="kv">
+      <span class="kv-k">Code HTTP</span>
+      <span class="kv-v">{{if .Entry.HTTP.StatusCode}}{{ .Entry.HTTP.StatusCode }}{{else}}—{{end}}</span>
+    </div>
+    <div class="kv">
+      <span class="kv-k">Temps de réponse</span>
+      <span class="kv-v">{{if .Entry.HTTP.LatencyMs}}{{ .Entry.HTTP.LatencyMs }} ms{{else}}—{{end}}</span>
+    </div>
+    <div class="kv">
+      <span class="kv-k">Dernière vérification</span>
+      <span class="kv-v">{{if .Entry.LastCheck.IsZero}}à l'instant{{else}}{{ .Entry.LastCheck.Format "02/01/2006 15:04" }}{{end}}</span>
+    </div>
+    <a href="https://{{ .Entry.FQDN }}" target="_blank" rel="noopener noreferrer" class="open-btn">
+      Accéder à https://{{ .Entry.FQDN }} ↗
+    </a>
   </div>
 </div>
-
-<script>
-async function saveAnnotation(e) {
-  e.preventDefault();
-  const body = {
-    description: document.getElementById('f-desc').value,
-    criticality: document.getElementById('f-crit').value,
-    owner: document.getElementById('f-owner').value,
-    tags: document.getElementById('f-tags').value,
-    notes: document.getElementById('f-notes').value,
-  };
-  const res = await fetch('/api/v1/domains/' + encodeURIComponent('{{ .Entry.FQDN }}') + '/annotation', {
-    method: 'PATCH',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify(body),
-  });
-  const status = document.getElementById('save-status');
-  if (res.ok) {
-    status.textContent = '✓ Sauvegardé';
-    status.style.color = 'var(--green)';
-    setTimeout(() => { status.textContent = ''; }, 3000);
-  } else {
-    status.textContent = '✗ Erreur';
-    status.style.color = 'var(--red)';
-  }
-}
-</script>
 </body>
 </html>
 {{end}}
+

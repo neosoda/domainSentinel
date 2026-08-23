@@ -47,6 +47,7 @@ func (s *Server) loadTemplates() {
 		"formatAge":    formatAge,
 		"statusLabel":  statusLabel,
 		"statusClass":  statusClass,
+		"cleanTitle":   cleanTitle,
 		"httpClass":    httpClass,
 		"latencyClass": latencyClass,
 		"hostClass":    hostClass,
@@ -568,16 +569,24 @@ func formatAge(ts time.Time) string {
 	}
 }
 
+func cleanTitle(d *models.DomainEntry) string {
+	if d == nil {
+		return ""
+	}
+	if d.Subdomain != "" && d.Subdomain != "@" {
+		return d.Subdomain
+	}
+	return d.Domain
+}
+
 func statusLabel(s models.Status) string {
 	switch s {
-	case models.StatusOK:
-		return "OK"
+	case models.StatusOK, models.StatusAnomaly:
+		return "En ligne"
 	case models.StatusDown:
-		return "DOWN"
-	case models.StatusAnomaly:
-		return "⚠ Anomalie"
+		return "Hors ligne"
 	default:
-		return "?"
+		return "Inconnu"
 	}
 }
 

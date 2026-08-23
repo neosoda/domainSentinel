@@ -56,13 +56,9 @@ services:
       # Persistent SQLite + annotations (managed by Coolify, NOT bind mounts)
       - domainsentinel_data:/data
       - domainsentinel_config:/config
-
-    # ⚠️  Host bind mounts for the Traefik file provider + Docker socket.
-    # These paths MUST exist on the Coolify server host.
-    # If the host paths differ, edit them here or remove these two lines
-    # (DomainSentinel will then only see Docker labels, not YAML files).
-    - /opt/traefik/dynamic:/traefik-dynamic:ro
-    - /var/run/docker.sock:/var/run/docker.sock:ro
+      # Host bind mounts for the Traefik file provider + Docker socket.
+      - /opt/traefik/dynamic:/traefik-dynamic:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
 
     environment:
       - CLOUDFLARE_TOKEN=${CLOUDFLARE_TOKEN:-}

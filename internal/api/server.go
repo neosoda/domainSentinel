@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
@@ -19,6 +20,7 @@ import (
 	"domainsentinel/internal/config"
 	"domainsentinel/internal/db"
 	"domainsentinel/internal/models"
+	"domainsentinel/web"
 )
 
 // Server is the HTTP server.
@@ -41,12 +43,6 @@ func NewServer(cfg *config.Config, database *db.DB, app interface{ TriggerRefres
 }
 
 func (s *Server) loadTemplates() {
-	possibleDirs := []string{
-		"web/templates",
-		"/app/web/templates",
-		filepath.Join(os.Getenv("PWD"), "web/templates"),
-	}
-
 	funcMap := template.FuncMap{
 		"formatAge":    formatAge,
 		"statusLabel":  statusLabel,
@@ -60,9 +56,18 @@ func (s *Server) loadTemplates() {
 		"upper":        strings.ToUpper,
 	}
 
-	var lastErr error
+	tmpl := template.New("").Funcs(funcMap)
+
+	// First try local disk directories (useful during development)
+	possibleDirs := []string{
+		"web/templates",
+		"/app/web/templates",
+		filepath.Join(os.Getenv("PWD"), "web/templates"),
+	}
+
+	diskLoaded := false
 	for _, dir := range possibleDirs {
-		if _, err := os.Stat(dir); err == nil {
+		if fi, err := os.Stat(dir); err == nil && fi.IsDir() {
 			entries, _ := os.ReadDir(dir)
 			var files []string
 			for _, e := range entries {
@@ -70,33 +75,45 @@ func (s *Server) loadTemplates() {
 					files = append(files, filepath.Join(dir, e.Name()))
 				}
 			}
-			if len(files) == 0 {
-				continue
-			}
-
-			tmpl := template.New("").Funcs(funcMap)
-			for _, f := range files {
-				name := strings.TrimSuffix(filepath.Base(f), ".html") + ".html"
-				data, err := os.ReadFile(f)
-				if err != nil {
-					continue
+			if len(files) > 0 {
+				for _, f := range files {
+					name := filepath.Base(f)
+					data, err := os.ReadFile(f)
+					if err != nil {
+						continue
+					}
+					if _, err := tmpl.New(name).Parse(string(data)); err != nil {
+						slog.Warn("template parse error from disk", "file", f, "error", err)
+					}
 				}
-				_, err = tmpl.New(name).Parse(string(data))
-				if err != nil {
-					slog.Warn("template parse error", "file", f, "error", err)
+				if len(tmpl.Templates()) > 0 {
+					diskLoaded = true
+					slog.Info("templates loaded from disk", "dir", dir, "count", len(tmpl.Templates()))
+					break
 				}
 			}
-			if len(tmpl.Templates()) > 0 {
-				s.tmpl = tmpl
-				slog.Info("templates loaded", "dir", dir, "count", len(tmpl.Templates()))
-				return
-			}
-			lastErr = fmt.Errorf("no templates parsed from %s", dir)
 		}
 	}
 
-	slog.Warn("could not load templates", "last_error", lastErr)
-	s.tmpl = template.New("empty")
+	// Fallback to embedded templates if not loaded from disk
+	if !diskLoaded {
+		if entries, err := fs.ReadDir(web.FS, "templates"); err == nil {
+			for _, e := range entries {
+				if !e.IsDir() && strings.HasSuffix(e.Name(), ".html") {
+					data, err := web.FS.ReadFile("templates/" + e.Name())
+					if err != nil {
+						continue
+					}
+					if _, err := tmpl.New(e.Name()).Parse(string(data)); err != nil {
+						slog.Warn("embedded template parse error", "file", e.Name(), "error", err)
+					}
+				}
+			}
+			slog.Info("templates loaded from embedded FS", "count", len(tmpl.Templates()))
+		}
+	}
+
+	s.tmpl = tmpl
 }
 
 func (s *Server) serveStatic() {
@@ -106,12 +123,16 @@ func (s *Server) serveStatic() {
 		filepath.Join(os.Getenv("PWD"), "web/static"),
 	}
 	for _, dir := range possibleDirs {
-		if _, err := os.Stat(dir); err == nil {
+		if fi, err := os.Stat(dir); err == nil && fi.IsDir() {
 			s.static = http.Dir(dir)
 			return
 		}
 	}
-	// No static files available
+	// Fallback to embedded static files
+	if sub, err := fs.Sub(web.FS, "static"); err == nil {
+		s.static = http.FS(sub)
+		return
+	}
 	s.static = http.Dir("/dev/null")
 }
 

@@ -126,29 +126,19 @@ func ExtractTraefikRouters(container ContainerInfo) []TraefikRouterInfo {
 			configs[routerName] = cfg
 		}
 
-		switch attr {
-		case "rule":
+		switch {
+		case attr == "rule":
 			cfg.Rule = val
-		case "entrypoints":
+		case attr == "entrypoints":
 			cfg.Entrypoints = splitComma(val)
-		case "service":
+		case attr == "service":
 			cfg.Service = val
-		case "tls":
-			cfg.TLS = val == "true"
-		case "middlewares":
+		case attr == "tls":
+			cfg.TLS = val == "true" || val == "{}"
+		case strings.HasPrefix(attr, "tls."):
+			cfg.TLS = true
+		case attr == "middlewares":
 			cfg.Middlewares = splitComma(val)
-		}
-	}
-
-	// Collect middlewares from container labels
-	mwMap := make(map[string]bool)
-	for key := range container.Labels {
-		if strings.HasPrefix(key, "traefik.http.middlewares.") {
-			rest := strings.TrimPrefix(key, "traefik.http.middlewares.")
-			parts := strings.SplitN(rest, ".", 2)
-			if len(parts) >= 1 {
-				mwMap[parts[0]] = true
-			}
 		}
 	}
 
@@ -162,12 +152,8 @@ func ExtractTraefikRouters(container ContainerInfo) []TraefikRouterInfo {
 			Entrypoints: cfg.Entrypoints,
 			Service:     cfg.Service,
 			TLS:         cfg.TLS,
+			Middlewares: cfg.Middlewares,
 			Source:      "docker",
-		}
-		for _, mw := range cfg.Middlewares {
-			if mwMap[mw] {
-				r.Middlewares = append(r.Middlewares, mw)
-			}
 		}
 		routers = append(routers, r)
 	}

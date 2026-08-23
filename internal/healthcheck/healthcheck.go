@@ -55,6 +55,7 @@ func (c *Checker) Check(ctx context.Context, url string) models.HTTPSnapshot {
 		snapshot.Error = fmt.Sprintf("invalid URL: %v", err)
 		return snapshot
 	}
+	req.Header.Set("User-Agent", RandomUserAgent())
 
 	// Follow redirects up to 5 hops
 	client := &http.Client{
@@ -76,6 +77,10 @@ func (c *Checker) Check(ctx context.Context, url string) models.HTTPSnapshot {
 		return snapshot
 	}
 	defer resp.Body.Close()
+
+	// Drain a small amount to allow connection reuse/clean close
+	buf := make([]byte, 2048)
+	_, _ = resp.Body.Read(buf)
 
 	snapshot.StatusCode = resp.StatusCode
 	snapshot.IsUp = models.IsHTTPUp(resp.StatusCode)
@@ -112,10 +117,8 @@ func (c *Checker) BatchCheck(ctx context.Context, urls map[string]string) map[st
 	sem := make(chan struct{}, c.concurrency)
 
 	for fqdn, url := range urls {
-		select {
-		case <-ctx.Done():
+		if ctx.Err() != nil {
 			break
-		default:
 		}
 
 		wg.Add(1)

@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -104,8 +106,8 @@ func (s *CloudflareScanner) Scan(ctx context.Context) (map[string]*models.Cloudf
 	return result, nil
 }
 
-func (s *CloudflareScanner) do(ctx context.Context, method, url string, body interface{}) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, method, url, nil)
+func (s *CloudflareScanner) do(ctx context.Context, method, urlStr string, body interface{}) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, method, urlStr, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -118,30 +120,34 @@ func (s *CloudflareScanner) do(ctx context.Context, method, url string, body int
 	}
 	defer resp.Body.Close()
 
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read cloudflare response: %w", err)
+	}
+
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("cloudflare API error: %s", resp.Status)
+		return nil, fmt.Errorf("cloudflare API error: %s (%s)", resp.Status, string(data))
 	}
 
-	var buf []byte
-	// simple read
-	bs := make([]byte, 1024*64)
-	for {
-		n, err := resp.Body.Read(bs)
-		buf = append(buf, bs[:n]...)
-		if n == 0 || err != nil {
-			break
-		}
-	}
-
-	return buf, nil
+	return data, nil
 }
 
 func (s *CloudflareScanner) listZones(ctx context.Context) ([]cfZoneResponse, error) {
+	// First attempt: filter directly by zone name
+	directURL := fmt.Sprintf("https://api.cloudflare.com/client/v4/zones?name=%s&per_page=1", url.QueryEscape(s.zoneName))
+	data, err := s.do(ctx, "GET", directURL, nil)
+	if err == nil {
+		var r cfZoneResponse
+		if err := json.Unmarshal(data, &r); err == nil && len(r.Result) > 0 {
+			return []cfZoneResponse{r}, nil
+		}
+	}
+
 	var result []cfZoneResponse
 	page := 1
 	for {
-		url := fmt.Sprintf("https://api.cloudflare.com/client/v4/zones?page=%d&per_page=50", page)
-		data, err := s.do(ctx, "GET", url, nil)
+		listURL := fmt.Sprintf("https://api.cloudflare.com/client/v4/zones?page=%d&per_page=50", page)
+		data, err := s.do(ctx, "GET", listURL, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -162,11 +168,11 @@ func (s *CloudflareScanner) listRecords(ctx context.Context) ([]cfRecord, error)
 	var all []cfRecord
 	page := 1
 	for {
-		url := fmt.Sprintf(
-			"https://api.cloudflare.com/client/v4/zones/%s/dns_records?page=%d&per_page=100&type=A&type=AAAA&type=CNAME",
+		urlStr := fmt.Sprintf(
+			"https://api.cloudflare.com/client/v4/zones/%s/dns_records?page=%d&per_page=100",
 			s.zoneID, page,
 		)
-		data, err := s.do(ctx, "GET", url, nil)
+		data, err := s.do(ctx, "GET", urlStr, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -174,7 +180,12 @@ func (s *CloudflareScanner) listRecords(ctx context.Context) ([]cfRecord, error)
 		if err := json.Unmarshal(data, &r); err != nil {
 			return nil, err
 		}
-		all = append(all, r.Result...)
+		for _, rec := range r.Result {
+			// Filter A, AAAA, CNAME
+			if rec.Type == "A" || rec.Type == "AAAA" || rec.Type == "CNAME" {
+				all = append(all, rec)
+			}
+		}
 		if len(r.Result) < 100 {
 			break
 		}

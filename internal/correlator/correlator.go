@@ -259,7 +259,7 @@ func (c *Correlator) DetectAnomalies(entry *models.DomainEntry) []models.Anomaly
 
 	// CONTAINER_DOWN: Traefik exists but container is not running
 	if entry.Traefik.Exists && entry.Docker.ContainerID != "" {
-		if entry.Docker.Status != "running" {
+		if entry.Docker.Status != "running" && entry.Docker.Status != "" {
 			anomalies = append(anomalies, models.Anomaly{
 				Type:     models.AnomalyContainerDown,
 				Message:  models.AnomalyContainerDown.Message(entry.FQDN),
@@ -277,14 +277,47 @@ func (c *Correlator) DetectAnomalies(entry *models.DomainEntry) []models.Anomaly
 		})
 	}
 
-	// TLS_ERROR: HTTPS should work but doesn't
-	if entry.Traefik.Exists && contains(entry.Traefik.Entrypoints, "websecure") && !entry.HTTP.TLSValid && entry.HTTP.Error != "" {
-		if strings.Contains(entry.HTTP.Error, "certificate") || strings.Contains(entry.HTTP.Error, "tls") || strings.Contains(entry.HTTP.Error, "x509") {
+	// SERVICE_DOWN: DNS + Traefik OK but HTTP unreachable / 5xx error
+	if entry.DNS.Exists && entry.Traefik.Exists {
+		if entry.HTTP.StatusCode != 0 && !entry.HTTP.IsUp {
 			anomalies = append(anomalies, models.Anomaly{
-				Type:     models.AnomalyTLSError,
-				Message:  models.AnomalyTLSError.Message(entry.FQDN),
+				Type:     models.AnomalyServiceDown,
+				Message:  models.AnomalyServiceDown.Message(entry.FQDN),
 				Severity: models.SeverityCritical,
 			})
+		} else if entry.HTTP.Error != "" && entry.HTTP.StatusCode == 0 {
+			anomalies = append(anomalies, models.Anomaly{
+				Type:     models.AnomalyServiceDown,
+				Message:  models.AnomalyServiceDown.Message(entry.FQDN) + " (" + entry.HTTP.Error + ")",
+				Severity: models.SeverityCritical,
+			})
+		}
+	}
+
+	// TLS_ERROR: HTTPS should work but doesn't or certificate expired
+	if entry.Traefik.Exists && contains(entry.Traefik.Entrypoints, "websecure") {
+		if !entry.HTTP.TLSValid && entry.HTTP.Error != "" {
+			if strings.Contains(entry.HTTP.Error, "certificate") || strings.Contains(entry.HTTP.Error, "tls") || strings.Contains(entry.HTTP.Error, "x509") {
+				anomalies = append(anomalies, models.Anomaly{
+					Type:     models.AnomalyTLSError,
+					Message:  models.AnomalyTLSError.Message(entry.FQDN),
+					Severity: models.SeverityCritical,
+				})
+			}
+		} else if entry.HTTP.TLSExpireAt != nil {
+			if time.Now().After(*entry.HTTP.TLSExpireAt) {
+				anomalies = append(anomalies, models.Anomaly{
+					Type:     models.AnomalyTLSError,
+					Message:  entry.FQDN + " : certificat TLS expiré",
+					Severity: models.SeverityCritical,
+				})
+			} else if time.Until(*entry.HTTP.TLSExpireAt) < 14*24*time.Hour {
+				anomalies = append(anomalies, models.Anomaly{
+					Type:     models.AnomalyTLSError,
+					Message:  entry.FQDN + " : certificat TLS expire dans moins de 14 jours",
+					Severity: models.SeverityWarning,
+				})
+			}
 		}
 	}
 

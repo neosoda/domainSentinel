@@ -7,83 +7,62 @@ import (
 	"domainsentinel/internal/scanner"
 )
 
-func TestTraefikFileScanner(t *testing.T) {
-	// Test YAML parsing without needing actual files
-	yamlContent := "http:\n  routers:\n    appwrite:\n      rule: \"Host(`appwrite.techsentinel.fr`) || Host(`appwrite-functions.techsentinel.fr`)\"\n      entryPoints:\n        - web\n      service: appwrite-backend01\n    coolify-web:\n      rule: \"Host(`coolify.techsentinel.fr`)\"\n      entryPoints:\n        - web\n        - websecure\n      service: coolify\n      tls: {}"
+func TestParseTraefikYAML(t *testing.T) {
+	yamlContent := "http:\n" +
+		"  routers:\n" +
+		"    appwrite:\n" +
+		"      rule: \"Host(`appwrite.techsentinel.fr`) || Host(`appwrite-functions.techsentinel.fr`)\"\n" +
+		"      entryPoints:\n" +
+		"        - web\n" +
+		"      service: appwrite-backend01\n" +
+		"      middlewares:\n" +
+		"        - authentik@docker\n" +
+		"        - gzip\n" +
+		"    coolify-web:\n" +
+		"      rule: \"Host(`coolify.techsentinel.fr`)\"\n" +
+		"      entryPoints:\n" +
+		"        - web\n" +
+		"        - websecure\n" +
+		"      service: coolify\n" +
+		"      tls:\n" +
+		"        certResolver: letsencrypt\n"
 
-	entries := parseYAMLTestHelper(yamlContent, "test.yml")
+	entries := scanner.ParseTraefikYAML(yamlContent, "test.yml")
 
-	if len(entries) < 1 {
-		t.Skip("YAML parser is minimal — skipping if no entries found")
+	if len(entries) != 2 {
+		t.Fatalf("got %d entries, want 2", len(entries))
 	}
 
-	// Find appwrite router
-	var appwriteEntry *scanner.TraefikFileEntry
+	entryMap := make(map[string]scanner.TraefikFileEntry)
 	for _, e := range entries {
-		if e.RouterName == "appwrite" {
-			appwriteEntry = &e
-			break
-		}
+		entryMap[e.RouterName] = e
 	}
 
-	if appwriteEntry == nil {
-		t.Skip("YAML parser did not find appwrite router — parser may need refinement")
+	appwrite, ok := entryMap["appwrite"]
+	if !ok {
+		t.Fatalf("appwrite router not found in parsed entries")
+	}
+	if !strings.Contains(appwrite.Source, "test.yml") {
+		t.Errorf("Source = %q, want to contain test.yml", appwrite.Source)
+	}
+	if appwrite.Service != "appwrite-backend01" {
+		t.Errorf("Service = %q, want appwrite-backend01", appwrite.Service)
+	}
+	if len(appwrite.Middlewares) != 2 || appwrite.Middlewares[0] != "authentik@docker" {
+		t.Errorf("Middlewares = %v, want [authentik@docker gzip]", appwrite.Middlewares)
+	}
+	if len(appwrite.Entrypoints) != 1 || appwrite.Entrypoints[0] != "web" {
+		t.Errorf("Entrypoints = %v, want [web]", appwrite.Entrypoints)
 	}
 
-	if !strings.Contains(appwriteEntry.Source, "test.yml") {
-		t.Errorf("Source = %q, want to contain test.yml", appwriteEntry.Source)
+	coolify, ok := entryMap["coolify-web"]
+	if !ok {
+		t.Fatalf("coolify-web router not found in parsed entries")
 	}
-}
-
-// parseYAMLTestHelper mirrors the logic in scanner/traefik.go for testing without the file dependency.
-func parseYAMLTestHelper(content string, filename string) []scanner.TraefikFileEntry {
-	var entries []scanner.TraefikFileEntry
-	lines := strings.Split(content, "\n")
-	var currentRouter *scanner.TraefikFileEntry
-
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.Contains(line, "routers:") {
-			continue
-		}
-
-		// Router name line (4 spaces indent)
-		if strings.HasPrefix(line, "    ") && !strings.HasPrefix(line, "        ") {
-			if currentRouter != nil && currentRouter.Rule != "" {
-				entries = append(entries, *currentRouter)
-			}
-			name := strings.TrimSuffix(strings.TrimSpace(line), ":")
-			currentRouter = &scanner.TraefikFileEntry{RouterName: name, Source: "file:" + filename}
-			continue
-		}
-
-		if currentRouter == nil {
-			continue
-		}
-
-		// Inside router block
-		if strings.HasPrefix(line, "        ") {
-			colonIdx := strings.Index(line, ":")
-			if colonIdx > 0 {
-				key := strings.TrimSpace(line[:colonIdx])
-				val := strings.TrimSpace(line[colonIdx+1:])
-				val = strings.Trim(val, "\"' ")
-
-				switch key {
-				case "rule":
-					currentRouter.Rule = val
-				case "service":
-					currentRouter.Service = val
-				case "tls":
-					currentRouter.TLS = val == "true" || val == "{}" || val == ""
-				}
-			}
-		}
+	if !coolify.TLS {
+		t.Errorf("coolify.TLS = false, want true")
 	}
-
-	if currentRouter != nil && currentRouter.Rule != "" {
-		entries = append(entries, *currentRouter)
+	if len(coolify.Entrypoints) != 2 {
+		t.Errorf("coolify.Entrypoints = %v, want [web websecure]", coolify.Entrypoints)
 	}
-
-	return entries
 }

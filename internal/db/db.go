@@ -249,7 +249,7 @@ func (db *DB) GetAllDomains() ([]*models.DomainEntry, error) {
 
 	var entries []*models.DomainEntry
 	for rows.Next() {
-		e, err := scanDomainRow(rows)
+		e, err := scanDomain(rows)
 		if err != nil {
 			return nil, err
 		}
@@ -273,19 +273,7 @@ func (db *DB) GetDomain(fqdn string) (*models.DomainEntry, error) {
 		FROM domains WHERE fqdn = ?
 	`, fqdn)
 
-	e := &models.DomainEntry{}
-	err := row.Scan(
-		&e.FQDN, &e.Domain, &e.Subdomain, &e.Host, &e.FirstSeen, &e.LastSeen, &e.LastCheck,
-		&e.DNS.Exists, &e.DNS.Type, &e.DNS.Target, &e.DNS.Proxied, &e.DNS.TTL, &e.DNS.RecordID,
-		&e.Traefik.Exists, new(string), new(string), new(bool),
-		new(string), new(bool), new(string),
-		&e.Docker.ContainerID, &e.Docker.ContainerName, &e.Docker.Image, &e.Docker.Status,
-		&e.Docker.Health, new(string), new(string), new(string),
-		new(string), new(string), new(string),
-		&e.HTTP.StatusCode, &e.HTTP.LatencyMs, new(bool), new(sql.NullString),
-		new(string), &e.HTTP.Error, new(bool),
-		(*string)(&e.Status), new(string),
-	)
+	e, err := scanDomain(row)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -295,10 +283,14 @@ func (db *DB) GetDomain(fqdn string) (*models.DomainEntry, error) {
 	return e, nil
 }
 
-func scanDomainRow(rows *sql.Rows) (*models.DomainEntry, error) {
+type rowScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanDomain(s rowScanner) (*models.DomainEntry, error) {
 	var (
 		fqdn, domain, subdomain, host                    string
-		firstSeen, lastSeen, lastCheck                   time.Time
+		firstSeen, lastSeen, lastCheck                   sql.NullTime
 		dnsExists                                        int
 		dnsType, dnsTarget                               string
 		dnsProxied                                       int
@@ -323,7 +315,7 @@ func scanDomainRow(rows *sql.Rows) (*models.DomainEntry, error) {
 		anomalies                                        string
 	)
 
-	err := rows.Scan(
+	err := s.Scan(
 		&fqdn, &domain, &subdomain, &host, &firstSeen, &lastSeen, &lastCheck,
 		&dnsExists, &dnsType, &dnsTarget, &dnsProxied, &dnsTTL, &dnsRecordID,
 		&traefikExists, &traefikRouters, &traefikEntrypoints, &traefikTLS,
@@ -344,9 +336,6 @@ func scanDomainRow(rows *sql.Rows) (*models.DomainEntry, error) {
 		Domain:    domain,
 		Subdomain: subdomain,
 		Host:      host,
-		FirstSeen: firstSeen,
-		LastSeen:  lastSeen,
-		LastCheck: lastCheck,
 		DNS: models.DNSSnapshot{
 			Exists:   dnsExists == 1,
 			Type:     dnsType,
@@ -362,12 +351,15 @@ func scanDomainRow(rows *sql.Rows) (*models.DomainEntry, error) {
 			ServiceName:  traefikService.String,
 		},
 		Docker: models.DockerSnapshot{
-			ContainerID:   dockerCID,
-			ContainerName: dockerName,
-			Image:         dockerImage,
-			Status:        dockerStatus,
-			Health:        dockerHealth.String,
-			Source:        dockerSource,
+			ContainerID:    dockerCID,
+			ContainerName:  dockerName,
+			Image:          dockerImage,
+			Status:         dockerStatus,
+			Health:         dockerHealth.String,
+			Source:         dockerSource,
+			ComposeProject: dockerComposeProject.String,
+			ComposeService: dockerComposeService.String,
+			CoolifyName:    dockerCoolifyName.String,
 		},
 		HTTP: models.HTTPSnapshot{
 			StatusCode: httpStatusCode,
@@ -379,17 +371,29 @@ func scanDomainRow(rows *sql.Rows) (*models.DomainEntry, error) {
 		Status: models.Status(status),
 	}
 
-	json.Unmarshal([]byte(traefikRouters), &e.Traefik.RouterNames)
-	json.Unmarshal([]byte(traefikEntrypoints), &e.Traefik.Entrypoints)
-	json.Unmarshal([]byte(traefikMW), &e.Traefik.MiddlewareNames)
-	json.Unmarshal([]byte(dockerNetworks), &e.Docker.Networks)
-	json.Unmarshal([]byte(dockerLabels), &e.Docker.Labels)
-	json.Unmarshal([]byte(httpRedirects), &e.HTTP.Redirects)
-	json.Unmarshal([]byte(anomalies), &e.Anomalies)
+	if firstSeen.Valid {
+		e.FirstSeen = firstSeen.Time
+	}
+	if lastSeen.Valid {
+		e.LastSeen = lastSeen.Time
+	}
+	if lastCheck.Valid {
+		e.LastCheck = lastCheck.Time
+	}
+
+	_ = json.Unmarshal([]byte(traefikRouters), &e.Traefik.RouterNames)
+	_ = json.Unmarshal([]byte(traefikEntrypoints), &e.Traefik.Entrypoints)
+	_ = json.Unmarshal([]byte(traefikMW), &e.Traefik.MiddlewareNames)
+	_ = json.Unmarshal([]byte(dockerNetworks), &e.Docker.Networks)
+	_ = json.Unmarshal([]byte(dockerLabels), &e.Docker.Labels)
+	_ = json.Unmarshal([]byte(httpRedirects), &e.HTTP.Redirects)
+	_ = json.Unmarshal([]byte(anomalies), &e.Anomalies)
 
 	if httpTLSExpireAt.Valid {
-		t, _ := time.Parse(time.RFC3339, httpTLSExpireAt.String)
-		e.HTTP.TLSExpireAt = &t
+		t, err := time.Parse(time.RFC3339, httpTLSExpireAt.String)
+		if err == nil {
+			e.HTTP.TLSExpireAt = &t
+		}
 	}
 
 	// Derive Traefik source from existing data (since not stored in DB)
@@ -473,7 +477,9 @@ func (db *DB) GetSummary() (*models.DashboardSummary, error) {
 	s := &models.DashboardSummary{}
 	for rows.Next() {
 		var fqdn, status, anomalies string
-		rows.Scan(&fqdn, &status, &anomalies)
+		if err := rows.Scan(&fqdn, &status, &anomalies); err != nil {
+			continue
+		}
 
 		s.Total++
 		switch models.Status(status) {
@@ -486,7 +492,7 @@ func (db *DB) GetSummary() (*models.DashboardSummary, error) {
 		}
 
 		var list []models.Anomaly
-		json.Unmarshal([]byte(anomalies), &list)
+		_ = json.Unmarshal([]byte(anomalies), &list)
 		for _, a := range list {
 			s.AnomalyList = append(s.AnomalyList, models.AnomalyEntry{
 				FQDN:     fqdn,
@@ -496,17 +502,21 @@ func (db *DB) GetSummary() (*models.DashboardSummary, error) {
 		}
 	}
 
-	// This is a simplified version; we need fqdn too
+	lastScan, err := db.GetLastScanTime()
+	if err == nil && !lastScan.IsZero() {
+		s.LastScan = &lastScan
+	}
+
 	return s, nil
 }
 
 func (db *DB) GetLastScanTime() (time.Time, error) {
-	var t time.Time
-	err := db.QueryRow("SELECT MAX(last_check) FROM domains WHERE last_check IS NOT NULL").Scan(&t)
-	if err == sql.ErrNoRows {
+	var nt sql.NullTime
+	err := db.QueryRow("SELECT MAX(last_check) FROM domains WHERE last_check IS NOT NULL").Scan(&nt)
+	if err == sql.ErrNoRows || !nt.Valid {
 		return time.Time{}, nil
 	}
-	return t, err
+	return nt.Time, err
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────

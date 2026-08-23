@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 var (
@@ -67,104 +69,84 @@ func (s *TraefikFileScanner) Scan() ([]TraefikFileEntry, error) {
 			continue
 		}
 
-		parsed := parseTraefikYAML(string(data), name)
+		parsed := ParseTraefikYAML(string(data), name)
 		allEntries = append(allEntries, parsed...)
 	}
 
 	return allEntries, nil
 }
 
-// Simple YAML parser for Traefik dynamic config files.
-// Handles the known structure without a full YAML library dependency.
-type yamlKV struct {
-	key   string
-	value string
+type traefikYAMLDoc struct {
+	HTTP struct {
+		Routers map[string]struct {
+			Rule        string `yaml:"rule"`
+			EntryPoints any    `yaml:"entryPoints"`
+			Service     string `yaml:"service"`
+			Middlewares any    `yaml:"middlewares"`
+			TLS         any    `yaml:"tls"`
+		} `yaml:"routers"`
+	} `yaml:"http"`
 }
 
-func parseTraefikYAML(content string, filename string) []TraefikFileEntry {
+// ParseTraefikYAML parses Traefik dynamic configuration from YAML.
+func ParseTraefikYAML(content string, filename string) []TraefikFileEntry {
+	var doc traefikYAMLDoc
+	if err := yaml.Unmarshal([]byte(content), &doc); err != nil {
+		return nil
+	}
+
 	var entries []TraefikFileEntry
-
-	lines := strings.Split(content, "\n")
-	var currentRouter *TraefikFileEntry
-	var routerIndent int // indentation level of current router name
-
-	for _, rawLine := range lines {
-		line := strings.TrimSpace(rawLine)
-		if line == "" || strings.HasPrefix(line, "#") {
+	for name, r := range doc.HTTP.Routers {
+		if r.Rule == "" {
 			continue
 		}
-
-		// Compute raw indentation (tabs → 4 spaces)
-		spaces := countIndent(rawLine)
-
-		// Skip top-level keys like "http:", "tcp:", "udp:"
-		if spaces == 0 && strings.HasSuffix(line, ":") {
-			currentRouter = nil // reset on new top-level section
-			continue
-		}
-
-		// Router names appear at "routers:" indent + 2 (e.g. 4 spaces)
-		if strings.HasSuffix(line, ":") && !strings.Contains(line, ": ") {
-			// Save previous router
-			if currentRouter != nil && currentRouter.Rule != "" {
-				entries = append(entries, *currentRouter)
-			}
-			name := strings.TrimSuffix(line, ":")
-			currentRouter = &TraefikFileEntry{RouterName: name, Source: "file:" + filename}
-			routerIndent = spaces
-			continue
-		}
-
-		if currentRouter == nil {
-			continue
-		}
-
-		// Properties inside router block: indented more than the router name
-		if spaces > routerIndent {
-			kv := strings.SplitN(line, ":", 2)
-			if len(kv) != 2 {
-				continue
-			}
-			key := strings.TrimSpace(kv[0])
-			val := strings.TrimSpace(kv[1])
-			val = strings.Trim(val, "\"' ")
-
-			switch key {
-			case "rule":
-				currentRouter.Rule = val
-			case "entrypoints":
-				currentRouter.Entrypoints = splitComma(val)
-			case "service":
-				currentRouter.Service = val
-			case "tls":
-				currentRouter.TLS = val == "true" || val == "{}"
-			case "middlewares":
-				currentRouter.Middlewares = splitComma(val)
-			}
-		}
+		entries = append(entries, TraefikFileEntry{
+			RouterName:  name,
+			Rule:        r.Rule,
+			Entrypoints: parseYAMLStringSlice(r.EntryPoints),
+			Service:     r.Service,
+			Middlewares: parseYAMLStringSlice(r.Middlewares),
+			TLS:         parseYAMLTLS(r.TLS),
+			Source:      "file:" + filename,
+		})
 	}
-
-	// Save last router
-	if currentRouter != nil && currentRouter.Rule != "" {
-		entries = append(entries, *currentRouter)
-	}
-
 	return entries
 }
 
-// countIndent returns the number of leading spaces (tabs counted as 4 spaces).
-func countIndent(s string) int {
-	n := 0
-	for _, c := range s {
-		if c == '\t' {
-			n += 4
-		} else if c == ' ' {
-			n++
-		} else {
-			break
-		}
+func parseYAMLStringSlice(val any) []string {
+	if val == nil {
+		return nil
 	}
-	return n
+	switch v := val.(type) {
+	case string:
+		return splitComma(v)
+	case []any:
+		var res []string
+		for _, item := range v {
+			if s, ok := item.(string); ok && strings.TrimSpace(s) != "" {
+				res = append(res, strings.TrimSpace(s))
+			}
+		}
+		return res
+	case []string:
+		return v
+	}
+	return nil
+}
+
+func parseYAMLTLS(val any) bool {
+	if val == nil {
+		return false
+	}
+	switch v := val.(type) {
+	case bool:
+		return v
+	case string:
+		return v == "true" || v == "{}"
+	case map[string]any, map[any]any:
+		return true
+	}
+	return true
 }
 
 // ExtractHostnamesFromRule extracts all Host() FQDNs from a Traefik rule string.

@@ -1,0 +1,61 @@
+# ─── DomainSentinel — .gitignore ────────────────────────────────────────────
+# Suivez l'ordre : built artifacts → secrets → runtime → IDE → OS
+
+# ─── Go build artifacts ────────────────────────────────────────────────────
+/domainsentinel
+/domainsentinel.exe
+/bin/
+*.test
+*.out
+coverage.html
+coverage.txt
+*.cover
+
+# ─── Secrets & runtime data ────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+*.db
+*.db-shm
+*.db-wal
+/data/*
+!/data/.gitkeep
+/config/*
+!/config/.gitkeep
+
+# ─── Backup files ──────────────────────────────────────────────────────────
+*.bak
+*.bak-*
+*.backup
+*.old
+*.tmp
+*.swp
+
+# ─── Logs ──────────────────────────────────────────────────────────────────
+*.log
+logs/
+/tmp/
+
+# ─── Local dev / test artifacts ────────────────────────────────────────────
+/dist/
+/build/
+/out/
+.cache/
+.vscode/
+.idea/
+*.iml
+
+# ─── OS metadata ──────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ─── Editor / tooling ─────────────────────────────────────────────────────
+*~
+*.sublime-project
+*.sublime-workspace
+.history/
+
+# ─── Docker build context artifacts ────────────────────────────────────────
+docker-compose.override.yml
+docker-compose.local.yml

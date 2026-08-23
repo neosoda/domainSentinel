@@ -1,0 +1,26 @@
+/* DomainSentinel — Additional styles */
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--bg, #0f1117); }
+::-webkit-scrollbar-thumb { background: var(--border, #2a2d3a); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #3a3d4a; }
+
+/* Table row cursor */
+tr[style*="cursor:pointer"]:hover { cursor: pointer; }
+
+/* Responsive */
+@media (max-width: 900px) {
+  .domain-table { font-size: 10px; }
+  .col-service, .col-source, .col-latency { display: none; }
+  .quick-filters { display: none; }
+}
+@media (max-width: 600px) {
+  .header { flex-direction: column; gap: 8px; align-items: flex-start; }
+  .summary-bar { overflow-x: auto; }
+  .grid { grid-template-columns: 1fr; }
+  .annotation-form { grid-template-columns: 1fr; }
+}
+
+/* Smooth transitions */
+* { transition-property: background, border-color, color; transition-duration: 0.1s; }

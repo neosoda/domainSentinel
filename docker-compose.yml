@@ -1,0 +1,81 @@
+# DomainSentinel — docker-compose
+# Access via: domains.techsentinel.fr (Traefik + Authentik)
+#
+# Networks:
+#   proxy      — Traefik entry, Docker socket proxy
+#   internal   — (optional) internal services
+#
+# IMPORTANT: No port mapping. Only Traefik routes this service.
+
+services:
+  domainsentinel:
+    image: domainsentinel:latest
+    container_name: domainsentinel
+    restart: unless-stopped
+    group_add:
+      - 984
+    security_opt:
+      - no-new-privileges:true
+    # Hardening: read-only root FS, no Linux caps, tmpfs for /tmp
+    read_only: true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp:size=10m,mode=1777
+    # Allow writes to data/config volumes only
+    networks:
+      - proxy
+    volumes:
+      # SQLite data (persistent) — writable bind mount
+      - ./data:/data:rw
+      # Annotations / config (writable for future use)
+      - ./config:/config:rw
+      # Traefik dynamic config (read-only — parse router rules from YAML)
+      - /opt/traefik/dynamic:/traefik-dynamic:ro
+      # Docker socket (read-only mount, non-root user with supplementary docker group)
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      # Cloudflare
+      - CLOUDFLARE_TOKEN=${CLOUDFLARE_TOKEN}
+      - CLOUDFLARE_ZONE_NAME=${CLOUDFLARE_ZONE_NAME:-techsentinel.fr}
+      - CLOUDFLARE_TIMEOUT_S=${CLOUDFLARE_TIMEOUT_S:-15}
+      # App
+      - DS_HOST=0.0.0.0
+      - DS_PORT=3000
+      - DS_DATA_DIR=/data
+      - DS_CONFIG_DIR=/config
+      - DS_LOG_LEVEL=${DS_LOG_LEVEL:-INFO}
+      # Docker (local socket for initial scan, socket-proxy for runtime)
+      - DOCKER_HOST=unix:///var/run/docker.sock
+      - DOCKER_TIMEOUT_S=10
+      - TRAEFIK_DYNAMIC_DIR=/traefik-dynamic
+      # Healthcheck settings
+      - HEALTHCHECK_TIMEOUT_S=10
+      - HEALTHCHECK_CONCURRENCY=10
+      - HEALTHCHECK_INTERVAL_S=60
+      - SCANNER_INTERVAL_S=30
+      - HISTORY_RETENTION_DAYS=30
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.domainsentinel-http.rule=Host(`domains.techsentinel.fr`)"
+      - "traefik.http.routers.domainsentinel-http.entrypoints=web"
+      - "traefik.http.middlewares.domainsentinel-https-redirect.redirectscheme.scheme=https"
+      - "traefik.http.routers.domainsentinel-http.middlewares=domainsentinel-https-redirect"
+      - "traefik.http.routers.domainsentinel.rule=Host(`domains.techsentinel.fr`)"
+      - "traefik.http.routers.domainsentinel.entrypoints=websecure"
+      - "traefik.http.routers.domainsentinel.tls=true"
+      - "traefik.http.routers.domainsentinel.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.domainsentinel.service=domainsentinel"
+      - "traefik.http.services.domainsentinel.loadbalancer.server.port=3000"
+      # Authentik protection (ForwardAuth)
+      - "traefik.http.routers.domainsentinel.middlewares=authentik@docker"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:3000/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+networks:
+  proxy:
+    external: true

@@ -1,0 +1,115 @@
+# DomainSentinel — Coolify-specific docker-compose
+#
+# This file is identical in functionality to docker-compose.yml at the repo root.
+# The only differences are:
+#   1. Comments explain Coolify-specific deployment context
+#   2. The `version` key is removed (Compose v2 doesn't need it)
+#   3. Coolify-friendly labels are kept; the user can override the FQDN via
+#      Coolify's "Domains" tab, which will re-emit labels on top of these.
+#
+# ─── Coolify setup ──────────────────────────────────────────────────────────
+# In Coolify, when creating a new resource:
+#   - Build Pack: Docker Compose
+#   - Compose File: docker-compose.coolify.yml
+#   - Base Directory: / (repo root)
+#   - Network: proxy
+#   - Persistent volumes:
+#       domainsentinel_data:/data
+#       domainsentinel_config:/config
+#   - Domain: domains.techsentinel.fr -> http://domainsentinel:3000
+#   - Healthcheck: curl -sf http://localhost:3000/health || exit 1
+#
+# Environment variables (set in Coolify UI, NOT in a .env file):
+#   - CLOUDFLARE_TOKEN (mark as Secret)
+#   - CLOUDFLARE_ZONE_NAME (default: techsentinel.fr)
+#   - DS_LOG_LEVEL (default: INFO)
+#
+# See docs/COOLIFY.md for the full step-by-step guide.
+
+services:
+  domainsentinel:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: domainsentinel:latest
+    container_name: domainsentinel
+    restart: unless-stopped
+
+    # Non-root user + supplementary docker group (GID 984 on Debian)
+    # Adjust if your host has a different docker GID: `getent group docker`
+    group_add:
+      - "984"
+
+    # Container hardening — see SECURITY.md
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp:size=10m,mode=1777
+
+    networks:
+      - proxy
+
+    volumes:
+      # Persistent SQLite + annotations (managed by Coolify, NOT bind mounts)
+      - domainsentinel_data:/data
+      - domainsentinel_config:/config
+
+    # ⚠️  Host bind mounts for the Traefik file provider + Docker socket.
+    # These paths MUST exist on the Coolify server host.
+    # If the host paths differ, edit them here or remove these two lines
+    # (DomainSentinel will then only see Docker labels, not YAML files).
+    - /opt/traefik/dynamic:/traefik-dynamic:ro
+    - /var/run/docker.sock:/var/run/docker.sock:ro
+
+    environment:
+      - CLOUDFLARE_TOKEN=${CLOUDFLARE_TOKEN:-}
+      - CLOUDFLARE_ZONE_NAME=${CLOUDFLARE_ZONE_NAME:-techsentinel.fr}
+      - CLOUDFLARE_TIMEOUT_S=${CLOUDFLARE_TIMEOUT_S:-15}
+      - DS_HOST=0.0.0.0
+      - DS_PORT=3000
+      - DS_DATA_DIR=/data
+      - DS_CONFIG_DIR=/config
+      - DS_LOG_LEVEL=${DS_LOG_LEVEL:-INFO}
+      - DOCKER_HOST=unix:///var/run/docker.sock
+      - DOCKER_TIMEOUT_S=10
+      - TRAEFIK_DYNAMIC_DIR=/traefik-dynamic
+      - HEALTHCHECK_TIMEOUT_S=10
+      - HEALTHCHECK_CONCURRENCY=10
+      - HEALTHCHECK_INTERVAL_S=60
+      - SCANNER_INTERVAL_S=30
+      - HISTORY_RETENTION_DAYS=30
+
+    # Traefik labels — Coolify will add its own labels on top of these
+    # via the "Domains" tab. If you don't want Coolify to manage the FQDN,
+    # you can keep these labels and disable the "Domains" tab.
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.domainsentinel-http.rule=Host(`domains.techsentinel.fr`)"
+      - "traefik.http.routers.domainsentinel-http.entrypoints=web"
+      - "traefik.http.middlewares.domainsentinel-https-redirect.redirectscheme.scheme=https"
+      - "traefik.http.routers.domainsentinel-http.middlewares=domainsentinel-https-redirect"
+      - "traefik.http.routers.domainsentinel.rule=Host(`domains.techsentinel.fr`)"
+      - "traefik.http.routers.domainsentinel.entrypoints=websecure"
+      - "traefik.http.routers.domainsentinel.tls=true"
+      - "traefik.http.routers.domainsentinel.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.domainsentinel.service=domainsentinel"
+      - "traefik.http.services.domainsentinel.loadbalancer.server.port=3000"
+      - "traefik.http.routers.domainsentinel.middlewares=authentik@docker"
+
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:3000/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+networks:
+  proxy:
+    external: true
+
+volumes:
+  domainsentinel_data:
+  domainsentinel_config:

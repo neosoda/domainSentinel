@@ -79,6 +79,7 @@ func (db *DB) migrate() error {
 			http_tls_valid INTEGER DEFAULT 0,
 			http_tls_expire_at DATETIME,
 			http_redirects TEXT,
+			http_page_title TEXT DEFAULT '',
 			http_error TEXT,
 			http_is_up INTEGER DEFAULT 0,
 			status TEXT DEFAULT 'UNKNOWN',
@@ -114,6 +115,10 @@ func (db *DB) migrate() error {
 			return fmt.Errorf("migration: %w\nSQL: %s", err, m)
 		}
 	}
+
+	// Non-destructive schema evolution for existing SQLite databases
+	_, _ = db.Exec(`ALTER TABLE domains ADD COLUMN http_page_title TEXT DEFAULT ''`)
+
 	return nil
 }
 
@@ -156,7 +161,7 @@ func (db *DB) UpsertDomain(entry *models.DomainEntry) error {
 		docker_health, docker_networks, docker_labels, docker_source,
 		docker_compose_project, docker_compose_service, docker_coolify_name,
 		http_status_code, http_latency_ms, http_tls_valid, http_tls_expire_at,
-		http_redirects, http_error, http_is_up,
+		http_redirects, http_page_title, http_error, http_is_up,
 		status, anomalies, updated_at
 	) VALUES (
 		?, ?, ?, ?,
@@ -168,7 +173,7 @@ func (db *DB) UpsertDomain(entry *models.DomainEntry) error {
 		?, ?, ?, ?,
 		?, ?, ?,
 		?, ?, ?, ?,
-		?, ?, ?,
+		?, ?, ?, ?,
 		?, ?, CURRENT_TIMESTAMP
 	)
 	ON CONFLICT(fqdn) DO UPDATE SET
@@ -193,8 +198,8 @@ func (db *DB) UpsertDomain(entry *models.DomainEntry) error {
 		docker_coolify_name = excluded.docker_coolify_name,
 		http_status_code = excluded.http_status_code, http_latency_ms = excluded.http_latency_ms,
 		http_tls_valid = excluded.http_tls_valid, http_tls_expire_at = excluded.http_tls_expire_at,
-		http_redirects = excluded.http_redirects, http_error = excluded.http_error,
-		http_is_up = excluded.http_is_up,
+		http_redirects = excluded.http_redirects, http_page_title = excluded.http_page_title,
+		http_error = excluded.http_error, http_is_up = excluded.http_is_up,
 		status = excluded.status, anomalies = excluded.anomalies,
 		updated_at = CURRENT_TIMESTAMP
 	`
@@ -209,7 +214,7 @@ func (db *DB) UpsertDomain(entry *models.DomainEntry) error {
 		entry.Docker.Health, string(networksJSON), string(labelsJSON), entry.Docker.Source,
 		entry.Docker.ComposeProject, entry.Docker.ComposeService, entry.Docker.CoolifyName,
 		entry.HTTP.StatusCode, entry.HTTP.LatencyMs, tlsValid, tlsExpire,
-		string(redirectsJSON), entry.HTTP.Error, isUp,
+		string(redirectsJSON), entry.HTTP.PageTitle, entry.HTTP.Error, isUp,
 		string(entry.Status), string(anomaliesJSON),
 	)
 	return err
@@ -238,7 +243,7 @@ func (db *DB) GetAllDomains() ([]*models.DomainEntry, error) {
 			docker_health, docker_networks, docker_labels, docker_source,
 			docker_compose_project, docker_compose_service, docker_coolify_name,
 			http_status_code, http_latency_ms, http_tls_valid, http_tls_expire_at,
-			http_redirects, http_error, http_is_up,
+			http_redirects, http_page_title, http_error, http_is_up,
 			status, anomalies
 		FROM domains ORDER BY subdomain ASC
 	`)
@@ -268,7 +273,7 @@ func (db *DB) GetDomain(fqdn string) (*models.DomainEntry, error) {
 			docker_health, docker_networks, docker_labels, docker_source,
 			docker_compose_project, docker_compose_service, docker_coolify_name,
 			http_status_code, http_latency_ms, http_tls_valid, http_tls_expire_at,
-			http_redirects, http_error, http_is_up,
+			http_redirects, http_page_title, http_error, http_is_up,
 			status, anomalies
 		FROM domains WHERE fqdn = ?
 	`, fqdn)
@@ -309,7 +314,9 @@ func scanDomain(s rowScanner) (*models.DomainEntry, error) {
 		httpStatusCode, httpLatencyMs                    int
 		httpTLSValid                                     int
 		httpTLSExpireAt                                  sql.NullString
-		httpRedirects, httpError                         string
+		httpRedirects                                    string
+		httpPageTitle                                    sql.NullString
+		httpError                                        string
 		httpIsUp                                         int
 		status                                           string
 		anomalies                                        string
@@ -324,7 +331,7 @@ func scanDomain(s rowScanner) (*models.DomainEntry, error) {
 		&dockerHealth, &dockerNetworks, &dockerLabels, &dockerSource,
 		&dockerComposeProject, &dockerComposeService, &dockerCoolifyName,
 		&httpStatusCode, &httpLatencyMs, &httpTLSValid, &httpTLSExpireAt,
-		&httpRedirects, &httpError, &httpIsUp,
+		&httpRedirects, &httpPageTitle, &httpError, &httpIsUp,
 		&status, &anomalies,
 	)
 	if err != nil {
@@ -365,6 +372,7 @@ func scanDomain(s rowScanner) (*models.DomainEntry, error) {
 			StatusCode: httpStatusCode,
 			LatencyMs:  httpLatencyMs,
 			TLSValid:   httpTLSValid == 1,
+			PageTitle:  httpPageTitle.String,
 			Error:      httpError,
 			IsUp:       httpIsUp == 1,
 		},

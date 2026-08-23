@@ -37,6 +37,9 @@ type Config struct {
 	// History retention
 	HistoryRetentionDays int
 
+	// Optional Webhook for status alert dispatching (Discord, Telegram, Ntfy, generic)
+	WebhookURL string
+
 	// Server names (known hosts)
 	KnownHosts map[string]string // IP → name e.g. "192.168.1.201" → "BACKEND01"
 }
@@ -59,6 +62,7 @@ func Load() *Config {
 		HealthcheckIntervalS:   intEnv("HEALTHCHECK_INTERVAL_S", 60),
 		ScannerIntervalS:       intEnv("SCANNER_INTERVAL_S", 30),
 		HistoryRetentionDays:   intEnv("HISTORY_RETENTION_DAYS", 30),
+		WebhookURL:             env("WEBHOOK_URL", os.Getenv("DS_WEBHOOK_URL")),
 		KnownHosts: map[string]string{
 			"192.168.1.200": "NEOSERVER",
 			"192.168.1.201": "BACKEND01",

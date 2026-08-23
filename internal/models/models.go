@@ -1,6 +1,7 @@
 package models
 
 import (
+	"strings"
 	"time"
 )
 
@@ -72,8 +73,36 @@ type HTTPSnapshot struct {
 	TLSValid    bool       `json:"tls_valid"`
 	TLSExpireAt *time.Time `json:"tls_expire_at,omitempty"`
 	Redirects   []string   `json:"redirects,omitempty"`
+	PageTitle   string     `json:"page_title,omitempty"`
 	Error       string     `json:"error,omitempty"` // network error, timeout, etc.
 	IsUp        bool       `json:"is_up"`           // considered "up" per status classification
+}
+
+// Category returns a high-level category based on subdomain name conventions.
+func (d *DomainEntry) Category() string {
+	sub := strings.ToLower(d.Subdomain)
+	switch {
+	case strings.Contains(sub, "auth") || strings.Contains(sub, "sso") || strings.Contains(sub, "vault") || strings.Contains(sub, "login") || strings.Contains(sub, "pass"):
+		return "auth"
+	case strings.Contains(sub, "stat") || strings.Contains(sub, "grafana") || strings.Contains(sub, "prom") || strings.Contains(sub, "metric") || strings.Contains(sub, "uptime") || strings.Contains(sub, "monit"):
+		return "monitoring"
+	case strings.Contains(sub, "coolify") || strings.Contains(sub, "portainer") || strings.Contains(sub, "traefik") || strings.Contains(sub, "appwrite") || strings.Contains(sub, "registry") || strings.Contains(sub, "dock"):
+		return "infra"
+	default:
+		return "apps"
+	}
+}
+
+// TLSDaysLeft returns the remaining validity in days for the TLS certificate.
+func (d *DomainEntry) TLSDaysLeft() int {
+	if d.HTTP.TLSExpireAt == nil || d.HTTP.TLSExpireAt.IsZero() {
+		return 0
+	}
+	days := int(time.Until(*d.HTTP.TLSExpireAt).Hours() / 24)
+	if days < 0 {
+		return 0
+	}
+	return days
 }
 
 var (

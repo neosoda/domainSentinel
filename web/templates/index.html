@@ -3,153 +3,357 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>DomainSentinel — Mes Sous-domaines</title>
+  <title>DomainSentinel — {{ .Zone }}</title>
   <link rel="stylesheet" href="/static/style.css">
   <script src="/static/alpine.min.js" defer></script>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔭</text></svg>">
 </head>
-<body x-data="dashboard()" x-init="init()">
+<body x-data="dashboard()" x-init="init()" @keydown.window="handleGlobalKey($event)">
 
 <div class="app">
-  <!-- Header -->
+  <!-- Top Navigation -->
   <header class="header">
     <div class="header-left">
-      <h1 class="logo">
-        <span class="logo-icon">🔭</span>
-        DomainSentinel
-      </h1>
-      <span class="zone-badge">{{ .Zone }}</span>
-    </div>
-    <div class="header-right">
-      <div class="last-scan">
-        {{if .LastScan.IsZero}}Dernier scan : à l'instant{{else}}Scan : il y a {{ formatAge .LastScan }}{{end}}
+      <div class="brand">
+        <span class="brand-icon">🔭</span>
+        <span class="brand-name">DomainSentinel</span>
       </div>
-      <button class="btn-refresh" @click="refresh()" :disabled="scanning">
-        <svg x-show="!scanning" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
-        <svg x-show="scanning" class="spin" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-9-9"/></svg>
-        Actualiser
+      <span class="zone-pill">{{ .Zone }}</span>
+      <div class="live-indicator" :class="sseConnected ? 'connected' : ''" title="Flux temps réel actif">
+        <span class="live-dot"></span>
+        <span class="live-text" x-text="sseConnected ? 'Live' : 'Scan auto'"></span>
+      </div>
+    </div>
+
+    <div class="header-right">
+      <!-- View Switcher -->
+      <div class="view-toggle">
+        <button class="view-btn" :class="view === 'grid' ? 'active' : ''" @click="setView('grid')" title="Vue Grille (Touche G)">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+        </button>
+        <button class="view-btn" :class="view === 'table' ? 'active' : ''" @click="setView('table')" title="Vue Liste (Touche G)">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+        </button>
+      </div>
+
+      <!-- Export Dropdown -->
+      <div class="dropdown-wrap" @click.outside="exportOpen = false">
+        <button class="btn-action" @click="exportOpen = !exportOpen" title="Exporter l'inventaire">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          <span>Exporter</span>
+        </button>
+        <div class="dropdown-menu" x-show="exportOpen" x-transition>
+          <a href="/api/v1/export/csv" class="dropdown-item" download>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+            Format CSV (.csv)
+          </a>
+          <a href="/api/v1/export/json" class="dropdown-item" download>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+            Format JSON (.json)
+          </a>
+          <a href="/api/v1/export/markdown" class="dropdown-item" download>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><path d="M7 15V9l3 3 3-3v6"/><path d="M17 9v6l2-2"/></svg>
+            Format Markdown (.md)
+          </a>
+        </div>
+      </div>
+
+      <!-- Refresh Button -->
+      <button class="btn-refresh" @click="refresh()" :disabled="scanning" title="Actualiser (Touche R)">
+        <svg x-show="!scanning" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+        <svg x-show="scanning" class="spin" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-9-9"/></svg>
+        <span>Actualiser</span>
       </button>
     </div>
   </header>
 
-  <!-- Summary bar -->
-  <div class="summary-bar">
-    <div class="stats-group">
-      <a class="stat-card" :class="filter === '' ? 'active' : ''" href="javascript:void(0)" @click="setFilter('')">
-        <div class="stat-num">{{ .Summary.Total }}</div>
-        <div class="stat-txt">Total</div>
-      </a>
-      <a class="stat-card stat-ok" :class="filter === 'ok' ? 'active' : ''" href="javascript:void(0)" @click="setFilter('ok')">
-        <div class="stat-num">{{ .Summary.OK }}</div>
-        <div class="stat-txt">En ligne</div>
-      </a>
-      <a class="stat-card stat-down" :class="filter === 'down' ? 'active' : ''" href="javascript:void(0)" @click="setFilter('down')">
-        <div class="stat-num">{{ .Summary.Down }}</div>
-        <div class="stat-txt">Hors ligne</div>
-      </a>
+  <!-- Controls & Filters Section -->
+  <section class="toolbar">
+    <!-- Stat KPI pills -->
+    <div class="kpi-group">
+      <button class="kpi-chip" :class="statusFilter === '' ? 'active' : ''" @click="setStatusFilter('')">
+        <span class="kpi-label">Total</span>
+        <span class="kpi-val">{{ .Summary.Total }}</span>
+      </button>
+      <button class="kpi-chip kpi-ok" :class="statusFilter === 'ok' ? 'active' : ''" @click="setStatusFilter('ok')">
+        <span class="kpi-label">En ligne</span>
+        <span class="kpi-val">{{ .Summary.OK }}</span>
+      </button>
+      <button class="kpi-chip kpi-down" :class="statusFilter === 'down' ? 'active' : ''" @click="setStatusFilter('down')">
+        <span class="kpi-label">Hors ligne</span>
+        <span class="kpi-val">{{ .Summary.Down }}</span>
+      </button>
     </div>
 
-    <!-- Search input -->
-    <div class="search-wrap">
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-      <input type="text" x-model="search" @input="filterRows()" placeholder="Rechercher un sous-domaine…" class="search-field" autofocus>
-      <button x-show="search" @click="search=''; filterRows()" class="clear-btn">✕</button>
+    <!-- Category Tabs -->
+    <div class="category-tabs">
+      <button class="tab-btn" :class="category === 'all' ? 'active' : ''" @click="setCategory('all')">Tous</button>
+      <button class="tab-btn" :class="category === 'apps' ? 'active' : ''" @click="setCategory('apps')">🚀 Apps</button>
+      <button class="tab-btn" :class="category === 'auth' ? 'active' : ''" @click="setCategory('auth')">🛡️ Auth</button>
+      <button class="tab-btn" :class="category === 'monitoring' ? 'active' : ''" @click="setCategory('monitoring')">📊 Monitoring</button>
+      <button class="tab-btn" :class="category === 'infra' ? 'active' : ''" @click="setCategory('infra')">⚙️ Infra</button>
     </div>
-  </div>
 
-  <!-- Domain List Table -->
-  <main class="content">
-    <div class="table-card">
-      <table class="listing-table">
+    <!-- Search Input with Keyboard Shortcut Hint -->
+    <div class="search-box">
+      <svg class="search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+      <input type="text" x-ref="searchInput" x-model="search" @input="filterItems()" placeholder="Rechercher un sous-domaine…" class="search-input">
+      <kbd class="search-kbd" x-show="!search">/</kbd>
+      <button x-show="search" @click="clearSearch()" class="search-clear" title="Effacer (Echap)">✕</button>
+    </div>
+  </section>
+
+  <!-- Content Container -->
+  <main class="main-content">
+    <!-- GRID VIEW -->
+    <div class="domain-grid" x-show="view === 'grid'">
+      {{range .Domains}}
+      <div class="domain-card item-entry"
+           data-fqdn="{{ .FQDN }}"
+           data-subdomain="{{ .Subdomain }}"
+           data-category="{{ category . }}"
+           data-title="{{ .HTTP.PageTitle }}"
+           data-status="{{ if eq .Status "DOWN" }}down{{ else }}ok{{ end }}"
+           @click="openDomain('https://{{ .FQDN }}')">
+        
+        <div class="card-top">
+          <!-- Favicon / Monogram -->
+          <div class="avatar-wrap">
+            <img src="https://www.google.com/s2/favicons?domain={{ .FQDN }}&sz=32"
+                 alt=""
+                 class="avatar-img"
+                 loading="lazy"
+                 onerror="this.style.display='none'; this.nextElementSibling.style.display='flex'">
+            <div class="avatar-fallback" style="display:none;">
+              {{ upper (slice (cleanTitle .) 0 1) }}
+            </div>
+          </div>
+
+          <!-- Direct Link Action -->
+          <a href="https://{{ .FQDN }}" target="_blank" rel="noopener noreferrer" class="card-open-btn" @click.stop title="Ouvrir https://{{ .FQDN }}">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+          </a>
+        </div>
+
+        <div class="card-mid">
+          <div class="card-fqdn">
+            <span class="sub-name">{{ cleanTitle . }}</span><span class="root-zone">.{{ .Domain }}</span>
+          </div>
+          {{if .HTTP.PageTitle}}
+            <div class="card-desc" title="{{ .HTTP.PageTitle }}">{{ .HTTP.PageTitle }}</div>
+          {{else}}
+            <div class="card-desc muted">Service actif</div>
+          {{end}}
+        </div>
+
+        <div class="card-foot">
+          <div class="status-pill {{ if eq .Status "DOWN" }}down{{ else }}up{{ end }}">
+            <span class="status-dot"></span>
+            <span>{{ if eq .Status "DOWN" }}Hors ligne{{ else }}En ligne{{ end }}</span>
+            {{if .HTTP.StatusCode}}<span class="code-tag">{{ .HTTP.StatusCode }}</span>{{end}}
+          </div>
+
+          <div class="card-metrics">
+            {{if .HTTP.LatencyMs}}
+              <span class="meta-pill latency {{ latencyClass .HTTP.LatencyMs }}">{{ .HTTP.LatencyMs }}ms</span>
+            {{end}}
+            {{if tlsDaysLeft .}}
+              <span class="meta-pill ssl" title="Certificat TLS Let's Encrypt valide ({{ tlsDaysLeft . }} jours restants)">🔒 {{ tlsDaysLeft . }}j</span>
+            {{end}}
+          </div>
+        </div>
+      </div>
+      {{end}}
+    </div>
+
+    <!-- TABLE VIEW -->
+    <div class="table-container" x-show="view === 'table'">
+      <table class="data-table">
         <thead>
           <tr>
-            <th class="col-main">Sous-domaine</th>
-            <th class="col-status">Statut</th>
-            <th class="col-latency">Latence</th>
-            <th class="col-action">Accès direct</th>
+            <th class="th-service">Service & Sous-domaine</th>
+            <th class="th-status">Statut</th>
+            <th class="th-ssl">SSL</th>
+            <th class="th-latency">Latence</th>
+            <th class="th-action">Action</th>
           </tr>
         </thead>
         <tbody>
           {{range .Domains}}
-          <tr class="domain-row" data-fqdn="{{ .FQDN }}" data-subdomain="{{ .Subdomain }}" data-status="{{ if eq .Status "DOWN" }}down{{ else }}ok{{ end }}">
-            <!-- Subdomain / Title -->
-            <td class="col-main">
-              <div class="domain-info">
-                <a href="https://{{ .FQDN }}" target="_blank" rel="noopener noreferrer" class="domain-title">
-                  <span class="subdomain-highlight">{{ cleanTitle . }}</span><span class="domain-tld">.{{ .Domain }}</span>
-                </a>
-                <button class="copy-btn" @click="copyText('https://{{ .FQDN }}', $event)" title="Copier l'URL">
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+          <tr class="table-row item-entry"
+              data-fqdn="{{ .FQDN }}"
+              data-subdomain="{{ .Subdomain }}"
+              data-category="{{ category . }}"
+              data-title="{{ .HTTP.PageTitle }}"
+              data-status="{{ if eq .Status "DOWN" }}down{{ else }}ok{{ end }}">
+            
+            <td class="td-service">
+              <div class="cell-service">
+                <div class="avatar-wrap mini">
+                  <img src="https://www.google.com/s2/favicons?domain={{ .FQDN }}&sz=32"
+                       alt=""
+                       class="avatar-img"
+                       loading="lazy"
+                       onerror="this.style.display='none'; this.nextElementSibling.style.display='flex'">
+                  <div class="avatar-fallback mini" style="display:none;">
+                    {{ upper (slice (cleanTitle .) 0 1) }}
+                  </div>
+                </div>
+                <div class="service-texts">
+                  <a href="https://{{ .FQDN }}" target="_blank" rel="noopener noreferrer" class="row-fqdn">
+                    <span class="sub-name">{{ cleanTitle . }}</span><span class="root-zone">.{{ .Domain }}</span>
+                  </a>
+                  {{if .HTTP.PageTitle}}
+                    <span class="row-title">{{ .HTTP.PageTitle }}</span>
+                  {{end}}
+                </div>
+                <button class="row-copy-btn" @click="copyURL('https://{{ .FQDN }}', $event)" title="Copier l'URL">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
                 </button>
               </div>
             </td>
 
-            <!-- Status -->
-            <td class="col-status">
-              {{if eq .Status "DOWN"}}
-                <span class="status-badge down">
-                  <span class="dot red"></span> Hors ligne {{if .HTTP.StatusCode}}({{ .HTTP.StatusCode }}){{end}}
-                </span>
-              {{else}}
-                <span class="status-badge up">
-                  <span class="dot green"></span> En ligne {{if .HTTP.StatusCode}}({{ .HTTP.StatusCode }}){{end}}
-                </span>
-              {{end}}
+            <td class="td-status">
+              <span class="status-pill {{ if eq .Status "DOWN" }}down{{ else }}up{{ end }}">
+                <span class="status-dot"></span>
+                <span>{{ if eq .Status "DOWN" }}Hors ligne{{ else }}En ligne{{ end }}</span>
+                {{if .HTTP.StatusCode}}<span class="code-tag">{{ .HTTP.StatusCode }}</span>{{end}}
+              </span>
             </td>
 
-            <!-- Latency -->
-            <td class="col-latency">
-              {{if .HTTP.LatencyMs}}
-                <span class="latency-val">{{ .HTTP.LatencyMs }} ms</span>
+            <td class="td-ssl">
+              {{if tlsDaysLeft .}}
+                <span class="meta-pill ssl" title="Certificat TLS Let's Encrypt valide ({{ tlsDaysLeft . }} jours restants)">🔒 {{ tlsDaysLeft . }}j</span>
               {{else}}
                 <span class="muted">—</span>
               {{end}}
             </td>
 
-            <!-- Open action link -->
-            <td class="col-action">
-              <a href="https://{{ .FQDN }}" target="_blank" rel="noopener noreferrer" class="open-link" title="Ouvrir https://{{ .FQDN }}">
+            <td class="td-latency">
+              {{if .HTTP.LatencyMs}}
+                <span class="meta-pill latency {{ latencyClass .HTTP.LatencyMs }}">{{ .HTTP.LatencyMs }} ms</span>
+              {{else}}
+                <span class="muted">—</span>
+              {{end}}
+            </td>
+
+            <td class="td-action">
+              <a href="https://{{ .FQDN }}" target="_blank" rel="noopener noreferrer" class="table-open-btn">
                 Ouvrir ↗
               </a>
-            </td>
-          </tr>
-          {{else}}
-          <tr>
-            <td colspan="4" class="empty-cell">
-              <div class="empty-box">
-                <p>Aucun sous-domaine trouvé.</p>
-              </div>
             </td>
           </tr>
           {{end}}
         </tbody>
       </table>
     </div>
+
+    <!-- Empty search state -->
+    <div class="empty-state" x-show="visibleCount === 0" style="display:none;">
+      <div class="empty-icon">🔍</div>
+      <h3>Aucun sous-domaine trouvé</h3>
+      <p>Aucun résultat ne correspond à votre filtre actuel.</p>
+      <button class="btn-action" @click="resetFilters()">Réinitialiser les filtres</button>
+    </div>
   </main>
 
+  <!-- Footer -->
   <footer class="footer">
-    <span>DomainSentinel — Répertoire de sous-domaines</span>
+    <div class="footer-left">
+      <span>DomainSentinel — Répertoire d'infrastructure</span>
+    </div>
+    <div class="footer-shortcuts">
+      <span>Raccourcis :</span>
+      <kbd>/</kbd> Rechercher
+      <kbd>G</kbd> Vue Grille/Tableau
+      <kbd>R</kbd> Actualiser
+      <kbd>Echap</kbd> Réinitialiser
+    </div>
   </footer>
 </div>
 
-<!-- Toast notification for copy -->
-<div id="toast" class="toast">URL copiée dans le presse-papier !</div>
+<!-- Toast notification -->
+<div id="toast" class="toast-popup">URL copiée dans le presse-papier !</div>
 
 <script>
 function dashboard() {
   return {
-    scanning: false,
+    view: localStorage.getItem('ds_view') || 'grid',
     search: '',
-    filter: '',
+    category: 'all',
+    statusFilter: '',
+    scanning: false,
+    exportOpen: false,
+    sseConnected: false,
+    visibleCount: {{ len .Domains }},
 
     init() {
-      // Auto-refresh summary silently every 60s
-      setInterval(() => this.refreshSilent(), 60000);
+      this.connectSSE();
+      this.filterItems();
     },
 
-    setFilter(f) {
-      this.filter = (this.filter === f) ? '' : f;
-      this.filterRows();
+    setView(v) {
+      this.view = v;
+      localStorage.setItem('ds_view', v);
+    },
+
+    setCategory(c) {
+      this.category = c;
+      this.filterItems();
+    },
+
+    setStatusFilter(s) {
+      this.statusFilter = (this.statusFilter === s) ? '' : s;
+      this.filterItems();
+    },
+
+    clearSearch() {
+      this.search = '';
+      this.filterItems();
+      if (this.$refs.searchInput) this.$refs.searchInput.focus();
+    },
+
+    resetFilters() {
+      this.search = '';
+      this.category = 'all';
+      this.statusFilter = '';
+      this.filterItems();
+    },
+
+    openDomain(url) {
+      window.open(url, '_blank');
+    },
+
+    copyURL(url, ev) {
+      if (ev) ev.stopPropagation();
+      navigator.clipboard.writeText(url).then(() => {
+        const toast = document.getElementById('toast');
+        toast.classList.add('visible');
+        setTimeout(() => toast.classList.remove('visible'), 2000);
+      });
+    },
+
+    handleGlobalKey(e) {
+      const tag = (e.target.tagName || '').toLowerCase();
+      if (tag === 'input' || tag === 'textarea') {
+        if (e.key === 'Escape') {
+          this.clearSearch();
+          e.target.blur();
+        }
+        return;
+      }
+      if (e.key === '/') {
+        e.preventDefault();
+        if (this.$refs.searchInput) this.$refs.searchInput.focus();
+      } else if (e.key.toLowerCase() === 'g') {
+        e.preventDefault();
+        this.setView(this.view === 'grid' ? 'table' : 'grid');
+      } else if (e.key.toLowerCase() === 'r') {
+        e.preventDefault();
+        this.refresh();
+      } else if (e.key === 'Escape') {
+        this.resetFilters();
+      }
     },
 
     async refresh() {
@@ -157,389 +361,59 @@ function dashboard() {
       this.scanning = true;
       try {
         await fetch('/api/v1/refresh', { method: 'POST' });
-        setTimeout(() => location.reload(), 2500);
-      } catch(e) {
+        setTimeout(() => location.reload(), 2000);
+      } catch (e) {
         console.error(e);
         this.scanning = false;
       }
     },
 
-    async refreshSilent() {
+    connectSSE() {
+      if (!window.EventSource) return;
       try {
-        await fetch('/api/v1/summary');
-      } catch(e) {}
+        const evtSource = new EventSource('/api/v1/events');
+        evtSource.addEventListener('connected', () => {
+          this.sseConnected = true;
+        });
+        evtSource.addEventListener('summary', (e) => {
+          this.sseConnected = true;
+        });
+        evtSource.onerror = () => {
+          this.sseConnected = false;
+        };
+      } catch (e) {}
     },
 
-    filterRows() {
+    filterItems() {
       const q = this.search.toLowerCase().trim();
-      const rows = document.querySelectorAll('.domain-row');
-      let visibleCount = 0;
+      const cat = this.category;
+      const st = this.statusFilter;
+      const items = document.querySelectorAll('.item-entry');
+      let count = 0;
 
-      rows.forEach(row => {
-        const fqdn = (row.dataset.fqdn || '').toLowerCase();
-        const status = row.dataset.status || '';
+      items.forEach(el => {
+        const fqdn = (el.dataset.fqdn || '').toLowerCase();
+        const title = (el.dataset.title || '').toLowerCase();
+        const itemCat = el.dataset.category || 'apps';
+        const itemStatus = el.dataset.status || 'ok';
 
-        const matchesQuery = !q || fqdn.includes(q);
-        const matchesFilter = !this.filter || (this.filter === 'ok' && status === 'ok') || (this.filter === 'down' && status === 'down');
+        const matchQuery = !q || fqdn.includes(q) || title.includes(q);
+        const matchCategory = (cat === 'all') || (itemCat === cat);
+        const matchStatus = !st || (st === itemStatus);
 
-        if (matchesQuery && matchesFilter) {
-          row.style.display = '';
-          visibleCount++;
+        if (matchQuery && matchCategory && matchStatus) {
+          el.style.display = '';
+          count++;
         } else {
-          row.style.display = 'none';
+          el.style.display = 'none';
         }
       });
-    },
 
-    copyText(text, ev) {
-      if (ev) ev.stopPropagation();
-      navigator.clipboard.writeText(text).then(() => {
-        const toast = document.getElementById('toast');
-        toast.classList.add('show');
-        setTimeout(() => toast.classList.remove('show'), 2000);
-      });
+      this.visibleCount = count;
     }
-  }
+  };
 }
 </script>
-
-<style>
-:root {
-  --bg-app: #0d1117;
-  --bg-card: #161b22;
-  --bg-card-hover: #1c2128;
-  --border-color: #30363d;
-  --border-subtle: #21262d;
-  --text-main: #f0f6fc;
-  --text-muted: #8b949e;
-  --text-dim: #6e7681;
-  --green: #3fb950;
-  --green-bg: rgba(63, 185, 80, 0.12);
-  --red: #f85149;
-  --red-bg: rgba(248, 81, 73, 0.12);
-  --blue: #58a6ff;
-  --blue-bg: rgba(88, 166, 255, 0.12);
-}
-
-* { box-sizing: border-box; margin: 0; padding: 0; }
-body {
-  background: var(--bg-app);
-  color: var(--text-main);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  font-size: 13px;
-  line-height: 1.5;
-  min-height: 100vh;
-}
-
-.app {
-  display: flex;
-  flex-direction: column;
-  min-height: 100vh;
-}
-
-/* Header */
-.header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 14px 28px;
-  background: var(--bg-card);
-  border-bottom: 1px solid var(--border-color);
-}
-.header-left {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-.logo {
-  font-size: 16px;
-  font-weight: 700;
-  color: var(--text-main);
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  letter-spacing: -0.02em;
-}
-.logo-icon { font-size: 18px; }
-.zone-badge {
-  background: var(--border-subtle);
-  border: 1px solid var(--border-color);
-  color: var(--text-muted);
-  font-size: 11px;
-  font-weight: 500;
-  padding: 2px 8px;
-  border-radius: 12px;
-}
-
-.header-right {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-}
-.last-scan {
-  font-size: 12px;
-  color: var(--text-dim);
-}
-.btn-refresh {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  background: var(--border-subtle);
-  border: 1px solid var(--border-color);
-  color: var(--text-main);
-  padding: 6px 14px;
-  border-radius: 6px;
-  font-size: 12px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: background 0.15s, border-color 0.15s;
-}
-.btn-refresh:hover {
-  background: var(--border-color);
-  border-color: var(--text-dim);
-}
-.btn-refresh:disabled { opacity: 0.6; cursor: not-allowed; }
-.spin { animation: spin 1s linear infinite; }
-@keyframes spin { to { transform: rotate(360deg); } }
-
-/* Summary Bar */
-.summary-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 20px;
-  padding: 16px 28px;
-  background: var(--bg-app);
-  border-bottom: 1px solid var(--border-subtle);
-  flex-wrap: wrap;
-}
-.stats-group {
-  display: flex;
-  gap: 10px;
-}
-.stat-card {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  background: var(--bg-card);
-  border: 1px solid var(--border-color);
-  padding: 6px 14px;
-  border-radius: 8px;
-  text-decoration: none;
-  color: var(--text-main);
-  cursor: pointer;
-  transition: all 0.15s;
-}
-.stat-card:hover { border-color: var(--text-dim); }
-.stat-card.active { border-color: var(--blue); background: var(--blue-bg); }
-.stat-num { font-size: 16px; font-weight: 700; }
-.stat-txt { font-size: 12px; color: var(--text-muted); }
-.stat-ok .stat-num { color: var(--green); }
-.stat-down .stat-num { color: var(--red); }
-
-/* Search Box */
-.search-wrap {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  background: var(--bg-card);
-  border: 1px solid var(--border-color);
-  border-radius: 8px;
-  padding: 6px 12px;
-  width: 320px;
-  max-width: 100%;
-}
-.search-wrap svg { color: var(--text-dim); flex-shrink: 0; }
-.search-field {
-  background: none;
-  border: none;
-  outline: none;
-  color: var(--text-main);
-  font-size: 13px;
-  width: 100%;
-}
-.search-field::placeholder { color: var(--text-dim); }
-.clear-btn {
-  background: none;
-  border: none;
-  color: var(--text-dim);
-  cursor: pointer;
-  font-size: 12px;
-  padding: 0 2px;
-}
-.clear-btn:hover { color: var(--text-main); }
-
-/* Main Content */
-.content {
-  flex: 1;
-  padding: 20px 28px;
-}
-.table-card {
-  background: var(--bg-card);
-  border: 1px solid var(--border-color);
-  border-radius: 8px;
-  overflow: hidden;
-}
-
-.listing-table {
-  width: 100%;
-  border-collapse: collapse;
-  text-align: left;
-}
-.listing-table th {
-  padding: 10px 16px;
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  border-bottom: 1px solid var(--border-color);
-  background: rgba(22, 27, 34, 0.8);
-}
-.listing-table td {
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--border-subtle);
-  vertical-align: middle;
-}
-.listing-table tbody tr:last-child td {
-  border-bottom: none;
-}
-.listing-table tbody tr:hover {
-  background: var(--bg-card-hover);
-}
-
-.col-main { width: 55%; }
-.col-status { width: 22%; }
-.col-latency { width: 13%; }
-.col-action { width: 10%; text-align: right; }
-
-.domain-info {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.domain-title {
-  text-decoration: none;
-  font-size: 13px;
-  font-family: "JetBrains Mono", Consolas, Menlo, monospace;
-}
-.subdomain-highlight {
-  color: var(--blue);
-  font-weight: 600;
-}
-.domain-tld {
-  color: var(--text-muted);
-}
-.domain-title:hover .subdomain-highlight {
-  text-decoration: underline;
-}
-
-.copy-btn {
-  background: none;
-  border: none;
-  color: var(--text-dim);
-  cursor: pointer;
-  padding: 4px;
-  border-radius: 4px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  transition: color 0.15s, background 0.15s;
-}
-.copy-btn:hover {
-  color: var(--text-main);
-  background: var(--border-color);
-}
-
-.status-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 3px 10px;
-  border-radius: 20px;
-  font-size: 11px;
-  font-weight: 600;
-}
-.status-badge.up {
-  background: var(--green-bg);
-  color: var(--green);
-}
-.status-badge.down {
-  background: var(--red-bg);
-  color: var(--red);
-}
-.dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-}
-.dot.green { background: var(--green); }
-.dot.red { background: var(--red); }
-
-.latency-val {
-  font-size: 12px;
-  color: var(--text-muted);
-  font-family: "JetBrains Mono", monospace;
-}
-
-.open-link {
-  display: inline-block;
-  color: var(--blue);
-  text-decoration: none;
-  font-size: 12px;
-  font-weight: 500;
-  padding: 4px 8px;
-  border-radius: 4px;
-  transition: background 0.15s;
-}
-.open-link:hover {
-  background: var(--blue-bg);
-}
-
-.empty-cell {
-  padding: 40px !important;
-  text-align: center;
-}
-.empty-box p { color: var(--text-muted); }
-
-/* Footer */
-.footer {
-  padding: 16px 28px;
-  border-top: 1px solid var(--border-subtle);
-  text-align: center;
-  font-size: 11px;
-  color: var(--text-dim);
-}
-
-/* Toast */
-.toast {
-  position: fixed;
-  bottom: 24px;
-  right: 24px;
-  background: #21262d;
-  border: 1px solid var(--border-color);
-  color: var(--text-main);
-  padding: 8px 16px;
-  border-radius: 6px;
-  font-size: 12px;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.4);
-  opacity: 0;
-  transform: translateY(10px);
-  transition: all 0.2s ease;
-  pointer-events: none;
-  z-index: 100;
-}
-.toast.show {
-  opacity: 1;
-  transform: translateY(0);
-}
-
-@media (max-width: 640px) {
-  .header, .summary-bar, .content, .footer { padding: 12px 16px; }
-  .col-latency { display: none; }
-  .search-wrap { width: 100%; }
-}
-</style>
 </body>
 </html>
 

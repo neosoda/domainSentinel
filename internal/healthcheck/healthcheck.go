@@ -4,14 +4,39 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"html"
+	"io"
 	"math/rand"
 	"net"
 	"net/http"
+	"regexp"
+	"strings"
 	"sync"
 	"time"
 
 	"domainsentinel/internal/models"
 )
+
+var titleRegex = regexp.MustCompile(`(?i)<title[^>]*>([^<]+)</title>`)
+
+func extractHTMLTitle(body []byte) string {
+	match := titleRegex.FindSubmatch(body)
+	if len(match) > 1 {
+		title := html.UnescapeString(string(match[1]))
+		title = strings.TrimSpace(title)
+		title = strings.ReplaceAll(title, "\n", " ")
+		title = strings.ReplaceAll(title, "\r", " ")
+		// remove multiple spaces
+		for strings.Contains(title, "  ") {
+			title = strings.ReplaceAll(title, "  ", " ")
+		}
+		if len(title) > 60 {
+			title = title[:57] + "..."
+		}
+		return title
+	}
+	return ""
+}
 
 // Checker performs HTTP health checks.
 type Checker struct {
@@ -78,9 +103,12 @@ func (c *Checker) Check(ctx context.Context, url string) models.HTTPSnapshot {
 	}
 	defer resp.Body.Close()
 
-	// Drain a small amount to allow connection reuse/clean close
-	buf := make([]byte, 2048)
-	_, _ = resp.Body.Read(buf)
+	// Read up to 8KB of body to extract title and allow connection reuse
+	buf := make([]byte, 8192)
+	n, _ := io.ReadFull(resp.Body, buf)
+	if n > 0 {
+		snapshot.PageTitle = extractHTMLTitle(buf[:n])
+	}
 
 	snapshot.StatusCode = resp.StatusCode
 	snapshot.IsUp = models.IsHTTPUp(resp.StatusCode)

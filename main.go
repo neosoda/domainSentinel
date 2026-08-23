@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"domainsentinel/internal/alert"
 	"domainsentinel/internal/api"
 	"domainsentinel/internal/config"
 	"domainsentinel/internal/correlator"
@@ -25,6 +26,7 @@ type App struct {
 	scanner    *scanner.Scanner
 	correlator *correlator.Correlator
 	hchecker   *healthcheck.Checker
+	notifier   *alert.Notifier
 	router     *http.ServeMux
 	apiServer  *api.Server
 	stopChan   chan struct{}
@@ -66,6 +68,7 @@ func main() {
 		scanner:    scanner.NewScanner(cfg),
 		correlator: correlator.NewCorrelator(cfg),
 		hchecker:   hc,
+		notifier:   alert.NewNotifier(cfg.WebhookURL),
 		stopChan:   make(chan struct{}),
 	}
 
@@ -200,6 +203,9 @@ func (app *App) runHealthchecks(ctx context.Context, entries map[string]*models.
 		if err := app.db.UpsertDomain(entry); err != nil {
 			slog.Error("failed to update domain healthcheck", "fqdn", fqdn, "error", err)
 		}
+
+		// Dispatch webhook alert on status transition
+		app.notifier.CheckAndNotify(ctx, entry)
 	}
 }
 

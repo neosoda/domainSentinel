@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"html/template"
@@ -48,6 +49,8 @@ func (s *Server) loadTemplates() {
 		"statusLabel":  statusLabel,
 		"statusClass":  statusClass,
 		"cleanTitle":   cleanTitle,
+		"category":     func(d *models.DomainEntry) string { return d.Category() },
+		"tlsDaysLeft":  func(d *models.DomainEntry) int { return d.TLSDaysLeft() },
 		"httpClass":    httpClass,
 		"latencyClass": latencyClass,
 		"hostClass":    hostClass,
@@ -170,6 +173,14 @@ func (s *Server) setupRouter() {
 	r.Get("/api/v1/status", s.handleAPIStatus)
 	r.Get("/api/v1/summary", s.handleAPISummary)
 	r.Patch("/api/v1/domains/{fqdn}/annotation", s.handleAnnotate)
+
+	// Export endpoints (CSV, JSON, Markdown)
+	r.Get("/api/v1/export/csv", s.handleExportCSV)
+	r.Get("/api/v1/export/json", s.handleExportJSON)
+	r.Get("/api/v1/export/markdown", s.handleExportMarkdown)
+
+	// Live events stream (SSE)
+	r.Get("/api/v1/events", s.handleEventsSSE)
 
 	// Metrics
 	r.Get("/metrics", s.handleMetrics)
@@ -644,4 +655,115 @@ func orDash(s string) string {
 		return "—"
 	}
 	return s
+}
+
+// ── Export and SSE Handlers ──────────────────────────────────────────────────
+
+func (s *Server) handleExportCSV(w http.ResponseWriter, r *http.Request) {
+	domains, err := s.db.GetAllDomains()
+	if err != nil {
+		http.Error(w, "Failed to load domains", 500)
+		return
+	}
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition", "attachment; filename=\"domainsentinel-export.csv\"")
+
+	writer := csv.NewWriter(w)
+	defer writer.Flush()
+
+	_ = writer.Write([]string{"Sous-domaine", "FQDN", "Titre", "Statut", "Code HTTP", "Latence (ms)", "SSL Valide", "Dernier Scan"})
+	for _, d := range domains {
+		title := d.HTTP.PageTitle
+		if title == "" {
+			title = cleanTitle(d)
+		}
+		status := statusLabel(d.Status)
+		sslValid := "Non"
+		if d.HTTP.TLSValid {
+			sslValid = "Oui"
+		}
+		_ = writer.Write([]string{
+			d.Subdomain,
+			d.FQDN,
+			title,
+			status,
+			strconv.Itoa(d.HTTP.StatusCode),
+			strconv.Itoa(d.HTTP.LatencyMs),
+			sslValid,
+			d.LastCheck.Format("2006-01-02 15:04:05"),
+		})
+	}
+}
+
+func (s *Server) handleExportJSON(w http.ResponseWriter, r *http.Request) {
+	domains, err := s.db.GetAllDomains()
+	if err != nil {
+		http.Error(w, "Failed to load domains", 500)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Content-Disposition", "attachment; filename=\"domainsentinel-export.json\"")
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	_ = enc.Encode(domains)
+}
+
+func (s *Server) handleExportMarkdown(w http.ResponseWriter, r *http.Request) {
+	domains, err := s.db.GetAllDomains()
+	if err != nil {
+		http.Error(w, "Failed to load domains", 500)
+		return
+	}
+	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+	w.Header().Set("Content-Disposition", "attachment; filename=\"domainsentinel-export.md\"")
+
+	fmt.Fprintf(w, "# Inventaire des Sous-domaines (%s)\n\n", s.cfg.CloudflareZoneName)
+	fmt.Fprintln(w, "| Sous-domaine | URL | Titre | Statut | Code HTTP | Latence |")
+	fmt.Fprintln(w, "| :--- | :--- | :--- | :---: | :---: | :---: |")
+	for _, d := range domains {
+		title := d.HTTP.PageTitle
+		if title == "" {
+			title = cleanTitle(d)
+		}
+		statusIcon := "🟢"
+		if d.Status == models.StatusDown {
+			statusIcon = "🔴"
+		}
+		fmt.Fprintf(w, "| **%s** | [%s](https://%s) | %s | %s %s | `%d` | %d ms |\n",
+			cleanTitle(d), d.FQDN, d.FQDN, title, statusIcon, statusLabel(d.Status), d.HTTP.StatusCode, d.HTTP.LatencyMs)
+	}
+}
+
+func (s *Server) handleEventsSSE(w http.ResponseWriter, r *http.Request) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+
+	// Send initial event
+	fmt.Fprintf(w, "event: connected\ndata: {\"status\":\"connected\",\"zone\":\"%s\"}\n\n", s.cfg.CloudflareZoneName)
+	flusher.Flush()
+
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-ticker.C:
+			domains, _ := s.db.GetAllDomains()
+			lastScan, _ := s.db.GetLastScanTime()
+			summary := buildSummary(domains, &lastScan)
+			data, _ := json.Marshal(summary)
+			fmt.Fprintf(w, "event: summary\ndata: %s\n\n", string(data))
+			flusher.Flush()
+		}
+	}
 }

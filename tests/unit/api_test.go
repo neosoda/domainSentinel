@@ -251,4 +251,50 @@ func TestAPI_Endpoints(t *testing.T) {
 			t.Errorf("HTML body does not contain status.techsentinel.fr")
 		}
 	})
+
+	// 11. Export CSV
+	t.Run("GET /api/v1/export/csv", func(t *testing.T) {
+		resp, err := http.Get(ts.URL + "/api/v1/export/csv")
+		if err != nil {
+			t.Fatalf("GET export csv failed: %v", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("status = %d, want 200", resp.StatusCode)
+		}
+		buf := new(bytes.Buffer)
+		buf.ReadFrom(resp.Body)
+		if !strings.Contains(buf.String(), "status.techsentinel.fr") {
+			t.Errorf("CSV does not contain domain")
+		}
+	})
+
+	// 12. Export JSON
+	t.Run("GET /api/v1/export/json", func(t *testing.T) {
+		resp, err := http.Get(ts.URL + "/api/v1/export/json")
+		if err != nil {
+			t.Fatalf("GET export json failed: %v", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("status = %d, want 200", resp.StatusCode)
+		}
+	})
+
+	// 13. Export Markdown
+	t.Run("GET /api/v1/export/markdown", func(t *testing.T) {
+		resp, err := http.Get(ts.URL + "/api/v1/export/markdown")
+		if err != nil {
+			t.Fatalf("GET export markdown failed: %v", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("status = %d, want 200", resp.StatusCode)
+		}
+		buf := new(bytes.Buffer)
+		buf.ReadFrom(resp.Body)
+		if !strings.Contains(buf.String(), "| **status** |") {
+			t.Errorf("Markdown table does not contain expected format")
+		}
+	})
 }

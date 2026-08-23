@@ -30,10 +30,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user (Debian adduser syntax)
-# GID 984 = host docker group (socket owner)
+# GID 984 = host docker group (socket owner) — we add the user to this group
+# at build time so the container can read the docker socket without
+# needing --group-add 984 at runtime (which Coolify strips).
 RUN addgroup --system --gid 1000 domainsentinel && \
     addgroup --system --gid 984 docker && \
-    adduser --system --uid 1000 --ingroup domainsentinel --disabled-login --disabled-password domainsentinel
+    adduser --system --uid 1000 --ingroup domainsentinel --groups docker --disabled-login --disabled-password domainsentinel
 
 WORKDIR /app
 
